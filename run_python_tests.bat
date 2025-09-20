@@ -1,1 +1,2 @@
-python python_tests\cartpole\test.py
+python python_tests\cartpole\cartpole.py
+python python_tests\mountain_car\mountain_car.py

@@ -199,6 +199,7 @@ impl Gym for CartPoleV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{Testable, test_gym_against_python};
     use Gym;
 
     #[test]
@@ -272,120 +273,21 @@ mod tests {
         assert!(done);
     }
 
-    #[derive(serde::Deserialize)]
-    struct ExpectedOutput {
-        observation: Vec<f32>,
-        reward: f32,
-        done: bool,
-        truncated: bool,
+    impl Testable for CartPoleV1 {
+        fn reset_deterministic(&mut self) -> Result<Tensor, candle_core::Error> {
+            self.reset()?;
+            self.state = Tensor::from_vec(vec![0.0f32, 0.0, 0.0, 0.0], vec![4], &Device::Cpu)
+                .expect("Failed to create tensor.");
+            Ok(self.state.clone())
+        }
+
+        fn set_state(&mut self, state: Tensor) {
+            self.state = state;
+        }
     }
 
     #[test]
     fn test_cartpole_against_python() {
-        // Read the JSON files
-        let inputs_path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/python_tests/cartpole/inputs.json"
-        );
-        let outputs_path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/python_tests/cartpole/output.json"
-        );
-
-        let inputs_json = std::fs::read_to_string(inputs_path).expect("Failed to read inputs.json");
-        let outputs_json =
-            std::fs::read_to_string(outputs_path).expect("Failed to read output.json");
-
-        let inputs: Vec<u32> =
-            serde_json::from_str(&inputs_json).expect("Failed to parse inputs.json");
-        let expected_outputs: Vec<ExpectedOutput> =
-            serde_json::from_str(&outputs_json).expect("Failed to parse output.json");
-
-        // Create environment
-        let mut env = CartPoleV1::new(&Device::Cpu);
-        env.reset().unwrap();
-
-        env.state = Tensor::from_vec(vec![0.0f32, 0.0, 0.0, 0.0], vec![4], &Device::Cpu)
-            .expect("Failed to set initial state");
-
-        for i in 0..inputs.len() {
-            let action = inputs[i];
-            let action_tensor = Tensor::from_vec(vec![action], vec![], &Device::Cpu)
-                .expect("Failed to create action tensor");
-
-            env.state = if i == 0 || expected_outputs[i - 1].done {
-                env.reset().unwrap();
-                Tensor::from_vec(vec![0.0f32, 0.0, 0.0, 0.0], vec![4], &Device::Cpu)
-                    .expect("Failed to set initial state")
-            } else {
-                Tensor::from_vec(
-                    expected_outputs[i - 1].observation.clone(),
-                    vec![4],
-                    &Device::Cpu,
-                )
-                .expect("Failed to set state from previous output")
-            };
-
-            let step_info = env.step(action_tensor).expect("Failed to step environment");
-
-            let expected = &expected_outputs[i];
-
-            // Get the actual observation as a vector
-            let actual_obs = step_info
-                .state
-                .to_vec1::<f32>()
-                .expect("Failed to convert state to vector");
-
-            if step_info.reward != expected.reward {
-                panic!(
-                    "Mismatch at step {}: expected reward {}, got {}, expected obs {:?}, got {:?}",
-                    i, expected.reward, step_info.reward, expected.observation, actual_obs
-                );
-            }
-
-            if step_info.done {
-                assert!(expected.done, "Expected done to be true at step {}", i);
-                // reset isn't done here we set it at the top of the loop
-            } else {
-                assert!(!expected.done, "Expected done to be false at step {}", i);
-            }
-
-            if step_info.truncated {
-                assert!(
-                    expected.truncated,
-                    "Expected truncated to be true at step {}",
-                    i
-                );
-            } else {
-                assert!(
-                    !expected.truncated,
-                    "Expected truncated to be false at step {}",
-                    i
-                );
-            }
-
-            // verify observation matches expected (within a tolerance)
-            for j in 0..4 {
-                assert!(
-                    (actual_obs[j] - expected.observation[j]).abs() < 1e-4,
-                    "Mismatch at step {}, observation index {}: expected {}, got {}",
-                    i,
-                    j,
-                    expected.observation[j],
-                    actual_obs[j]
-                );
-            }
-        }
-
-        assert!(!inputs.is_empty(), "Inputs should not be empty");
-        assert!(
-            !expected_outputs.is_empty(),
-            "Expected outputs should not be empty"
-        );
-        assert_eq!(
-            inputs.len(),
-            expected_outputs.len(),
-            "Input and output lengths should match"
-        );
+        test_gym_against_python("cartpole", CartPoleV1::new(&Device::Cpu));
     }
 }

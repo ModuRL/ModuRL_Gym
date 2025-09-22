@@ -631,6 +631,7 @@ dependencies = [
 [[package]]
 name = "modurl"
 version = "0.1.0"
+source = "git+https://github.com/ModuRL/ModuRL#7cd14d7cad543a26537d1b6e9b3d0517af50ec38"
 dependencies = [
  "bon",
  "candle-core",

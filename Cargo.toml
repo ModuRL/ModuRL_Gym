@@ -10,6 +10,8 @@ tracing = { version = "0.1.37", optional = true }
 log = { version = "0.4.28", optional = true }
 box2d-rs = "0.0.4"
 rand = "0.9.2"
+minifb = { version = "0.28.0", optional = true }
+bon = "3.7.2"
 
 [dev-dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -22,3 +24,4 @@ candle-core = { git = "https://github.com/huggingface/candle", rev = "41a674c" }
 default = []
 tracing = ["dep:tracing"]
 logging = ["dep:log"]
+rendering = ["dep:minifb"]

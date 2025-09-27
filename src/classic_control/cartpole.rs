@@ -1,8 +1,12 @@
+use bon::bon;
 use candle_core::{Device, Tensor};
 use modurl::{
     gym::{Gym, StepInfo},
     spaces::{self, Space},
 };
+
+#[cfg(feature = "rendering")]
+use crate::rendering::Renderer;
 
 /// The classic CartPole environment.
 /// Converted from the OpenAI Gym CartPole environment.
@@ -22,10 +26,22 @@ pub struct CartPoleV1 {
     observation_space: spaces::BoxSpace,
     state: Tensor,
     steps_since_reset: usize,
+    sutton_barto_reward: bool,
+    #[cfg(feature = "rendering")]
+    renderer: Option<Renderer>,
 }
 
+#[bon]
 impl CartPoleV1 {
-    pub fn new(device: &Device) -> Self {
+    #[builder]
+    pub fn new(
+        #[builder(default = &Device::Cpu)] device: &Device,
+        #[builder(default = false)] sutton_barto_reward: bool,
+        #[builder(default = true)] is_euler: bool,
+        #[cfg(feature = "rendering")]
+        #[builder(default = false)]
+        render: bool,
+    ) -> Self {
         let gravity = 9.8;
         let masscart = 1.0;
         let masspole = 0.1;
@@ -34,7 +50,6 @@ impl CartPoleV1 {
         let polemass_length = masspole * length;
         let force_mag = 10.0;
         let tau = 0.02;
-        let is_euler = true;
 
         // Angle at which to fail the episode
         let theta_threshold_radians = 12.0 * 2.0 * std::f32::consts::PI / 360.0;
@@ -70,13 +85,149 @@ impl CartPoleV1 {
             state: Tensor::zeros(vec![4], candle_core::DType::F32, device)
                 .expect("Failed to create tensor."),
             steps_since_reset: 0,
+            sutton_barto_reward,
+            #[cfg(feature = "rendering")]
+            renderer: if render {
+                Some(Renderer::new(600, 400, "CartPole"))
+            } else {
+                None
+            },
         }
+    }
+
+    #[cfg(feature = "rendering")]
+    fn render(&mut self) {
+        if let Some(renderer) = &mut self.renderer {
+            let screen_width = renderer.get_width() as f32;
+
+            renderer.clear(0xFFFFFF);
+
+            let state_vec = self.state.to_vec1::<f32>().unwrap();
+            let cart_position = state_vec[0];
+            let pole_angle = state_vec[2];
+
+            let world_width = self.x_threshold * 2.0;
+            let scale = screen_width / world_width / 4.0;
+            let pole_width = 6.0;
+            let pole_length = scale * (2.0 * self.length) * 3.0;
+            let cart_width = 30.0;
+            let cart_height = 20.0;
+            let axle_offset = cart_height / 4.0;
+
+            let cart_x = cart_position * scale + screen_width / 2.0;
+            let cart_y = 300.0;
+
+            Self::draw_track(renderer, screen_width, cart_y);
+
+            Self::draw_cart(renderer, cart_x, cart_y, cart_width, cart_height);
+
+            // Draw the pole
+            Self::draw_pole(
+                renderer,
+                cart_x,
+                cart_y + axle_offset,
+                pole_angle,
+                pole_width,
+                pole_length,
+            );
+
+            // Draw the axle (connection point)
+            Self::draw_axle(renderer, cart_x, cart_y + axle_offset, pole_width);
+
+            renderer.present();
+        }
+    }
+
+    #[cfg(feature = "rendering")]
+    #[cfg(feature = "rendering")]
+    fn draw_track(renderer: &mut crate::rendering::Renderer, screen_width: f32, cart_y: f32) {
+        for x in 0..(screen_width as usize) {
+            renderer.rect(x, cart_y as usize, 1, 2, 0x000000);
+        }
+    }
+    #[cfg(feature = "rendering")]
+    #[cfg(feature = "rendering")]
+    fn draw_cart(
+        renderer: &mut crate::rendering::Renderer,
+        cart_x: f32,
+        cart_y: f32,
+        cart_width: f32,
+        cart_height: f32,
+    ) {
+        let l = -cart_width / 2.0;
+        let r = cart_width / 2.0;
+        let t = cart_height / 2.0;
+        let b = -cart_height / 2.0;
+
+        let cart_corners = [
+            (cart_x + l, cart_y + b),
+            (cart_x + l, cart_y + t),
+            (cart_x + r, cart_y + t),
+            (cart_x + r, cart_y + b),
+        ];
+        renderer.quad(
+            cart_corners[0],
+            cart_corners[1],
+            cart_corners[2],
+            cart_corners[3],
+            0x000000,
+        );
+    }
+    #[cfg(feature = "rendering")]
+    #[cfg(feature = "rendering")]
+    fn draw_pole(
+        renderer: &mut crate::rendering::Renderer,
+        axle_x: f32,
+        axle_y: f32,
+        angle: f32,
+        pole_width: f32,
+        pole_length: f32,
+    ) {
+        let l = -pole_width / 2.0;
+        let r = pole_width / 2.0;
+        let t = pole_length - pole_width / 2.0;
+        let b = -pole_width / 2.0;
+
+        let cos_a = (-angle).cos();
+        let sin_a = (-angle).sin();
+        let pole_corners = [
+            (l * cos_a - b * sin_a, l * sin_a + b * cos_a),
+            (l * cos_a - t * sin_a, l * sin_a + t * cos_a),
+            (r * cos_a - t * sin_a, r * sin_a + t * cos_a),
+            (r * cos_a - b * sin_a, r * sin_a + b * cos_a),
+        ];
+
+        let pole_screen_coords = [
+            (axle_x + pole_corners[0].0, axle_y - pole_corners[0].1),
+            (axle_x + pole_corners[1].0, axle_y - pole_corners[1].1),
+            (axle_x + pole_corners[2].0, axle_y - pole_corners[2].1),
+            (axle_x + pole_corners[3].0, axle_y - pole_corners[3].1),
+        ];
+
+        renderer.quad(
+            pole_screen_coords[0],
+            pole_screen_coords[1],
+            pole_screen_coords[2],
+            pole_screen_coords[3],
+            0xCA9865,
+        );
+    }
+
+    #[cfg(feature = "rendering")]
+    fn draw_axle(
+        renderer: &mut crate::rendering::Renderer,
+        axle_x: f32,
+        axle_y: f32,
+        pole_width: f32,
+    ) {
+        let axle_radius = (pole_width / 2.0) as usize;
+        renderer.draw_circle(axle_x as usize, axle_y as usize, axle_radius, 0x8184CB);
     }
 }
 
 impl Default for CartPoleV1 {
     fn default() -> Self {
-        Self::new(&Device::Cpu)
+        CartPoleV1::builder().build()
     }
 }
 
@@ -93,6 +244,10 @@ impl Gym for CartPoleV1 {
             .to_dtype(candle_core::DType::F32)?;
         self.state = state;
         self.steps_since_reset = 0;
+
+        #[cfg(feature = "rendering")]
+        self.render();
+
         Ok(self.state.clone())
     }
 
@@ -153,19 +308,25 @@ impl Gym for CartPoleV1 {
             });
         }
 
+        #[cfg(feature = "rendering")]
+        self.render();
         if !terminated {
+            let reward = if self.sutton_barto_reward { 0.0 } else { 1.0 };
+
             Ok(StepInfo {
                 state: self.state.clone(),
-                reward: 1.0,
+                reward,
                 done: false,
                 truncated: false,
             })
         } else if self.steps_beyond_terminated.is_none() {
             // Pole just fell!
             self.steps_beyond_terminated = Some(0);
+            let reward = if self.sutton_barto_reward { -1.0 } else { 1.0 };
+
             Ok(StepInfo {
                 state: self.state.clone(),
-                reward: 1.0,
+                reward,
                 done: true,
                 truncated: false,
             })
@@ -176,11 +337,13 @@ impl Gym for CartPoleV1 {
                     "You are calling 'step()' even though this environment has already returned terminated = True. You should always call 'reset()' once you receive 'terminated = True'"
                 );
             }
+            let reward = if self.sutton_barto_reward { -1.0 } else { 0.0 };
             // We already checked this is Some above, so this is safe.
             self.steps_beyond_terminated = Some(self.steps_beyond_terminated.unwrap() + 1);
+
             Ok(StepInfo {
                 state: self.state.clone(),
-                reward: 0.0,
+                reward,
                 done: true,
                 truncated: false,
             })
@@ -204,7 +367,7 @@ mod tests {
 
     #[test]
     fn test_cartpole() {
-        let mut env = CartPoleV1::new(&Device::Cpu);
+        let mut env = CartPoleV1::builder().build();
         let state = env.reset().expect("Failed to reset environment.");
         assert_eq!(state.shape().dim(0).expect("Failed to get state dim."), 4);
         let StepInfo {
@@ -232,7 +395,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_cartpole_invalid_action() {
-        let mut env = CartPoleV1::new(&Device::Cpu);
+        let mut env = CartPoleV1::builder().build();
         let _state = env.reset();
         let _info = env
             .step(
@@ -244,7 +407,7 @@ mod tests {
 
     #[test]
     fn reward_is_one_when_not_terminated() {
-        let mut env = CartPoleV1::new(&Device::Cpu);
+        let mut env = CartPoleV1::builder().build();
         env.reset().unwrap();
         let action = Tensor::from_vec(vec![1u32], vec![], &Device::Cpu).unwrap();
         let StepInfo {
@@ -288,6 +451,26 @@ mod tests {
 
     #[test]
     fn test_cartpole_against_python() {
-        test_gym_against_python("cartpole", CartPoleV1::new(&Device::Cpu), None);
+        test_gym_against_python("cartpole", CartPoleV1::builder().build(), None);
+    }
+
+    #[cfg(feature = "rendering")]
+    #[test]
+    fn test_cartpole_rendering() {
+        let mut env = CartPoleV1::builder().render(true).build();
+        let _state = env.reset().expect("Failed to reset environment.");
+        let action_space = env.action_space();
+        for _ in 0..200 {
+            let action = action_space.sample(&Device::Cpu);
+            let StepInfo {
+                state: _,
+                reward: _,
+                done,
+                truncated: _,
+            } = env.step(action).unwrap();
+            if done {
+                env.reset().unwrap();
+            }
+        }
     }
 }

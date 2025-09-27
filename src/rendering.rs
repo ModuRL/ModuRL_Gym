@@ -78,41 +78,4 @@ impl Renderer {
             }
         }
     }
-
-    // Add a line drawing method for better terrain rendering
-    pub fn line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: u32) {
-        let x0 = x0.round() as i32;
-        let y0 = y0.round() as i32;
-        let x1 = x1.round() as i32;
-        let y1 = y1.round() as i32;
-
-        let dx = (x1 - x0).abs();
-        let dy = (y1 - y0).abs();
-        let sx = if x0 < x1 { 1 } else { -1 };
-        let sy = if y0 < y1 { 1 } else { -1 };
-        let mut err = dx - dy;
-
-        let mut x = x0;
-        let mut y = y0;
-
-        loop {
-            if x >= 0 && x < self.w as i32 && y >= 0 && y < self.h as i32 {
-                self.buffer[y as usize * self.w + x as usize] = color;
-            }
-
-            if x == x1 && y == y1 {
-                break;
-            }
-
-            let e2 = 2 * err;
-            if e2 > -dy {
-                err -= dy;
-                x += sx;
-            }
-            if e2 < dx {
-                err += dx;
-                y += sy;
-            }
-        }
-    }
 }

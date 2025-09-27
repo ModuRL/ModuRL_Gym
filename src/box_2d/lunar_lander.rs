@@ -12,6 +12,7 @@ use box2d_rs::joints::b2_revolute_joint::*;
 use box2d_rs::shapes::b2_edge_shape::*;
 use box2d_rs::shapes::b2_polygon_shape::*;
 
+use bon::bon;
 use candle_core::{Device, Tensor};
 use modurl::{
     gym::{Gym, StepInfo},
@@ -19,6 +20,9 @@ use modurl::{
 };
 use std::cell::RefCell;
 use std::rc::Rc;
+
+#[cfg(feature = "rendering")]
+use crate::rendering::Renderer;
 
 // Constants from Python code
 const FPS: f32 = 50.0;
@@ -50,12 +54,51 @@ const MAIN_ENGINE_Y_LOCATION: f32 = 4.0; // The Y location of the main engine on
 const VIEWPORT_W: f32 = 600.0;
 const VIEWPORT_H: f32 = 400.0;
 
+// Rendering colors (ARGB format)
+#[cfg(feature = "rendering")]
+const COLOR_TERRAIN: u32 = 0xFFFFFFFF; // White
+#[cfg(feature = "rendering")]
+const COLOR_BACKGROUND: u32 = 0xFF000000; // Black
+#[cfg(feature = "rendering")]
+const COLOR_LANDING_PAD: u32 = 0xFFCCCC00; // Yellow/gold landing pad (204, 204, 0)
+#[cfg(feature = "rendering")]
+const COLOR_LANDER_BODY: u32 = 0xFF8066E6; // Purple main body (128, 102, 230)
+#[cfg(feature = "rendering")]
+const COLOR_LANDER_LEGS: u32 = 0xFF8066E6; // Purple legs (128, 102, 230)
+
 #[derive(Default, Copy, Clone, Debug, PartialEq)]
 struct UserDataTypes;
 impl UserDataType for UserDataTypes {
     type Fixture = i32;
     type Body = i32;
     type Joint = i32;
+}
+
+// Particle struct for engine flames with time-to-live
+#[derive(Clone)]
+struct Particle {
+    body: BodyPtr<UserDataTypes>,
+    ttl: f32, // time to live in seconds
+    initial_ttl: f32,
+}
+
+impl Particle {
+    fn new(body: BodyPtr<UserDataTypes>, ttl: f32) -> Self {
+        Self {
+            body,
+            ttl,
+            initial_ttl: ttl,
+        }
+    }
+
+    fn update(&mut self, dt: f32) -> bool {
+        self.ttl -= dt;
+        self.ttl > 0.0
+    }
+
+    fn get_alpha(&self) -> f32 {
+        (self.ttl / self.initial_ttl).max(0.0).min(1.0)
+    }
 }
 
 pub struct ContactDetector {
@@ -164,7 +207,7 @@ pub struct LunarLanderV3 {
     lander: Option<BodyPtr<UserDataTypes>>,
     legs: Vec<BodyPtr<UserDataTypes>>,
     leg_joints: Vec<B2jointPtr<UserDataTypes>>,
-    particles: Vec<BodyPtr<UserDataTypes>>,
+    particles: Vec<Particle>,
 
     // Contact detection
     contact_detector: Option<Rc<RefCell<ContactDetector>>>,
@@ -184,21 +227,28 @@ pub struct LunarLanderV3 {
     wind_idx: i32,
     torque_idx: i32,
 
-    // Spaces
-    #[allow(dead_code)]
-    action_space: Box<dyn Space>,
-    #[allow(dead_code)]
-    observation_space: Box<dyn Space>,
-
     // Random number generation
     rng: rand::rngs::ThreadRng,
 
     // Deterministic mode flag for testing
     deterministic_mode: bool,
+
+    #[cfg(feature = "rendering")]
+    renderer: Option<Renderer>,
 }
 
+#[bon]
 impl LunarLanderV3 {
-    pub fn new(gravity: f32, enable_wind: bool, wind_power: f32, turbulence_power: f32) -> Self {
+    #[builder]
+    pub fn new(
+        #[builder(default = -10.0)] gravity: f32,
+        #[builder(default = false)] enable_wind: bool,
+        #[builder(default = 15.0)] wind_power: f32,
+        #[builder(default = 1.5)] turbulence_power: f32,
+        #[cfg(feature = "rendering")]
+        #[builder(default = false)]
+        render: bool,
+    ) -> Self {
         assert!(
             -12.0 < gravity && gravity < 0.0,
             "gravity (current value: {}) must be between -12 and 0",
@@ -218,37 +268,6 @@ impl LunarLanderV3 {
                 turbulence_power
             );
         }
-
-        // Create observation space
-        let low = vec![
-            -2.5,                        // x coordinate
-            -2.5,                        // y coordinate
-            -10.0,                       // vx
-            -10.0,                       // vy
-            -2.0 * std::f32::consts::PI, // angle
-            -10.0,                       // angular velocity
-            0.0,                         // leg 1 contact
-            0.0,                         // leg 2 contact
-        ];
-        let high = vec![
-            2.5,                        // x coordinate
-            2.5,                        // y coordinate
-            10.0,                       // vx
-            10.0,                       // vy
-            2.0 * std::f32::consts::PI, // angle
-            10.0,                       // angular velocity
-            1.0,                        // leg 1 contact
-            1.0,                        // leg 2 contact
-        ];
-
-        let low_tensor =
-            Tensor::from_vec(low, vec![8], &Device::Cpu).expect("Failed to create low tensor");
-        let high_tensor =
-            Tensor::from_vec(high, vec![8], &Device::Cpu).expect("Failed to create high tensor");
-        let observation_space = Box::new(spaces::BoxSpace::new(low_tensor, high_tensor));
-
-        // Discrete action space: Nop, fire left engine, main engine, right engine
-        let action_space: Box<dyn Space> = Box::new(spaces::Discrete::new(4, 0));
 
         Self {
             gravity,
@@ -270,10 +289,18 @@ impl LunarLanderV3 {
             sky_polys: Vec::new(),
             wind_idx: 0,
             torque_idx: 0,
-            action_space,
-            observation_space,
             rng: rand::rng(),
             deterministic_mode: false,
+            #[cfg(feature = "rendering")]
+            renderer: if render {
+                Some(Renderer::new(
+                    VIEWPORT_W as usize,
+                    VIEWPORT_H as usize,
+                    "Lunar Lander",
+                ))
+            } else {
+                None
+            },
         }
     }
 
@@ -281,7 +308,7 @@ impl LunarLanderV3 {
         if let Some(world) = self.world.take() {
             // Clean up particles
             for particle in &self.particles {
-                world.borrow_mut().destroy_body(particle.clone());
+                world.borrow_mut().destroy_body(particle.body.clone());
             }
             self.particles.clear();
 
@@ -379,11 +406,318 @@ impl LunarLanderV3 {
             Tensor::from_vec(state, vec![8], &Device::Cpu)
         }
     }
+
+    #[cfg(feature = "rendering")]
+    fn render(&mut self) {
+        if let Some(renderer) = &mut self.renderer
+            && renderer.is_open()
+        {
+            // Clear screen with white background like original
+            renderer.clear(COLOR_TERRAIN);
+
+            // Draw all components in order
+            // We need to avoid borrowing conflicts, so we'll extract data first
+            let sky_polys = &self.sky_polys;
+            let helipad_x1 = self.helipad_x1;
+            let helipad_x2 = self.helipad_x2;
+            let helipad_y = self.helipad_y;
+            let lander = self.lander.as_ref();
+            let legs = &self.legs;
+            let particles = &self.particles;
+
+            // things appear from last to first
+            Self::render_terrain_static(renderer, sky_polys);
+            Self::render_landing_pad_static(renderer, helipad_x1, helipad_x2, helipad_y);
+            Self::render_legs_static(renderer, legs);
+            Self::render_particles_static(renderer, particles);
+            Self::render_lander_static(renderer, lander);
+
+            renderer.present();
+        }
+    }
+
+    #[cfg(feature = "rendering")]
+    fn render_terrain_static(
+        renderer: &mut crate::rendering::Renderer,
+        sky_polys: &[Vec<(f32, f32)>],
+    ) {
+        // Draw terrain polygons
+        for poly in sky_polys {
+            if poly.len() >= 4 {
+                renderer.quad(
+                    (poly[0].0 * SCALE, VIEWPORT_H - poly[0].1 * SCALE),
+                    (poly[1].0 * SCALE, VIEWPORT_H - poly[1].1 * SCALE),
+                    (poly[2].0 * SCALE, VIEWPORT_H - poly[2].1 * SCALE),
+                    (poly[3].0 * SCALE, VIEWPORT_H - poly[3].1 * SCALE),
+                    COLOR_BACKGROUND,
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "rendering")]
+    fn render_landing_pad_static(
+        renderer: &mut crate::rendering::Renderer,
+        helipad_x1: f32,
+        helipad_x2: f32,
+        helipad_y: f32,
+    ) {
+        // Draw landing pad at helipad position
+        let pad_width = helipad_x2 - helipad_x1;
+        let pad_height = 5.0;
+        let pad_x = helipad_x1 * SCALE;
+        let pad_y = VIEWPORT_H - helipad_y * SCALE - pad_height;
+
+        renderer.rect(
+            pad_x as usize,
+            pad_y as usize,
+            (pad_width * SCALE) as usize,
+            pad_height as usize,
+            COLOR_LANDING_PAD,
+        );
+    }
+
+    #[cfg(feature = "rendering")]
+    fn render_lander_static(
+        renderer: &mut crate::rendering::Renderer,
+        lander: Option<&BodyPtr<UserDataTypes>>,
+    ) {
+        // Draw lander
+        if let Some(lander) = lander {
+            let lander_pos = lander.borrow().get_position();
+            let lander_angle = lander.borrow().get_angle();
+            let lander_screen_x = lander_pos.x * SCALE;
+            let lander_screen_y = VIEWPORT_H - lander_pos.y * SCALE;
+            let cos_a = lander_angle.cos();
+            let sin_a = lander_angle.sin();
+
+            // Transform all vertices properly
+            let lander_points: Vec<(f32, f32)> = LANDER_POLY
+                .iter()
+                .map(|(x, y)| {
+                    let rotated_x = x * cos_a - y * sin_a;
+                    let rotated_y = x * sin_a + y * cos_a;
+                    (lander_screen_x + rotated_x, lander_screen_y - rotated_y)
+                })
+                .collect();
+
+            // Draw lander as multiple triangles to handle 6-vertex polygon
+            if lander_points.len() >= 6 {
+                // Split hexagon into triangles
+                renderer.quad(
+                    lander_points[0],
+                    lander_points[1],
+                    lander_points[2],
+                    lander_points[5],
+                    COLOR_LANDER_BODY,
+                );
+                renderer.quad(
+                    lander_points[2],
+                    lander_points[3],
+                    lander_points[4],
+                    lander_points[5],
+                    COLOR_LANDER_BODY,
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "rendering")]
+    fn render_legs_static(
+        renderer: &mut crate::rendering::Renderer,
+        legs: &[BodyPtr<UserDataTypes>],
+    ) {
+        // Draw legs
+        for leg in legs {
+            let leg_pos = leg.borrow().get_position();
+            let leg_angle = leg.borrow().get_angle();
+            let leg_screen_x = leg_pos.x * SCALE;
+            let leg_screen_y = VIEWPORT_H - leg_pos.y * SCALE;
+
+            // Draw leg as rectangle
+            let cos_a = leg_angle.cos();
+            let sin_a = leg_angle.sin();
+
+            let leg_vertices = [
+                (-LEG_W, -LEG_H),
+                (LEG_W, -LEG_H),
+                (LEG_W, LEG_H),
+                (-LEG_W, LEG_H),
+            ];
+
+            let leg_points: Vec<(f32, f32)> = leg_vertices
+                .iter()
+                .map(|(x, y)| {
+                    let rotated_x = x * cos_a - y * sin_a;
+                    let rotated_y = x * sin_a + y * cos_a;
+                    (leg_screen_x + rotated_x, leg_screen_y - rotated_y)
+                })
+                .collect();
+
+            renderer.quad(
+                leg_points[0],
+                leg_points[1],
+                leg_points[2],
+                leg_points[3],
+                COLOR_LANDER_LEGS,
+            );
+        }
+    }
+
+    #[cfg(feature = "rendering")]
+    fn render_particles_static(renderer: &mut crate::rendering::Renderer, particles: &[Particle]) {
+        // Draw engine particles as small rectangles with fade effect
+        for particle in particles {
+            let particle_pos = particle.body.borrow().get_position();
+            let particle_x = (particle_pos.x * SCALE) as i32;
+            let particle_y = (VIEWPORT_H - particle_pos.y * SCALE) as i32;
+
+            // Check bounds with some margin
+            if particle_x >= -10
+                && particle_x < (VIEWPORT_W as i32 + 10)
+                && particle_y >= -10
+                && particle_y < (VIEWPORT_H as i32 + 10)
+            {
+                // Make particles bright and visible with fade effect (original color scheme)
+                let alpha = particle.get_alpha();
+
+                // Use original orange/yellow flame colors that fade naturally
+                let r = (255.0 * (0.15 + 0.85 * alpha).max(0.2)) as u32;
+                let g = (128.0 * (0.5 * alpha).max(0.2)) as u32; // Orange effect like original
+                let b = (64.0 * (0.5 * alpha).max(0.2)) as u32; // Small amount of blue for realistic flame
+                let color = 0xFF000000 | (r << 16) | (g << 8) | b;
+
+                let size = (3.0 + 2.0 * alpha) as usize; // Smaller particles like original, 3-5px
+
+                // Ensure we don't go out of bounds
+                let safe_x = particle_x.max(0) as usize;
+                let safe_y = particle_y.max(0) as usize;
+
+                if safe_x < VIEWPORT_W as usize && safe_y < VIEWPORT_H as usize {
+                    renderer.rect(safe_x, safe_y, size, size, color);
+                }
+            }
+        }
+    }
+
+    // Particle creation methods
+    fn create_main_engine_particles(
+        &mut self,
+        world: B2worldPtr<UserDataTypes>,
+        lander_pos: &B2vec2,
+        lander_angle: f32,
+        tip: &(f32, f32),
+        dispersion: &[f32; 2],
+    ) {
+        use rand::Rng;
+
+        let mut particle_body_def = B2bodyDef::default();
+        particle_body_def.body_type = B2bodyType::B2DynamicBody;
+
+        // Position particles at the main engine nozzle
+        let particle_x =
+            lander_pos.x + tip.0 * (-MAIN_ENGINE_Y_LOCATION / SCALE + 2.0 * dispersion[0]);
+        let particle_y =
+            lander_pos.y - tip.1 * (-MAIN_ENGINE_Y_LOCATION / SCALE + 2.0 * dispersion[0]);
+
+        // Add some randomness to particle starting position
+        let rand_x = self.rng.random_range(-2.0..2.0) / SCALE;
+        let rand_y = self.rng.random_range(-2.0..2.0) / SCALE;
+
+        particle_body_def
+            .position
+            .set(particle_x + rand_x, particle_y + rand_y);
+        particle_body_def.angle = lander_angle + self.rng.random_range(-0.1..0.1);
+
+        let particle = B2world::create_body(world.clone(), &particle_body_def);
+
+        // Create a small circular shape for the particle (smaller like original)
+        let mut particle_shape = B2polygonShape::default();
+        particle_shape.set_as_box(0.8 / SCALE, 0.8 / SCALE);
+
+        let mut fixture_def = B2fixtureDef::default();
+        fixture_def.shape = Some(Rc::new(RefCell::new(particle_shape)));
+        fixture_def.density = 0.1;
+        fixture_def.friction = 0.0;
+        fixture_def.filter.category_bits = 0x0100; // Different category so they don't collide with lander
+        fixture_def.filter.mask_bits = 0x0000; // Don't collide with anything
+
+        B2body::create_fixture(particle.clone(), &fixture_def);
+
+        // Apply velocity to particle (flame effect)
+        let flame_vel_x = -tip.0 * (20.0 + self.rng.random_range(-5.0..5.0));
+        let flame_vel_y = -tip.1 * (20.0 + self.rng.random_range(-5.0..5.0));
+
+        particle
+            .borrow_mut()
+            .set_linear_velocity(B2vec2::new(flame_vel_x, flame_vel_y));
+
+        self.particles.push(Particle::new(particle, 0.5)); // 0.5 second lifetime for main engine particles (faster fade like original)
+    }
+
+    fn create_side_engine_particles(
+        &mut self,
+        world: B2worldPtr<UserDataTypes>,
+        lander_pos: &B2vec2,
+        lander_angle: f32,
+        tip: &(f32, f32),
+        side: &(f32, f32),
+        direction: f32,
+        dispersion: &[f32; 2],
+    ) {
+        use rand::Rng;
+
+        // Create particle for side engine flames (reduced count like original)
+        for _ in 0..1 {
+            let mut particle_body_def = B2bodyDef::default();
+            particle_body_def.body_type = B2bodyType::B2DynamicBody;
+
+            // Position particles at the side engine nozzle
+            let engine_offset_x = side.0 * direction * SIDE_ENGINE_AWAY / SCALE + dispersion[0];
+            let engine_offset_y = side.1 * direction * SIDE_ENGINE_AWAY / SCALE + dispersion[1];
+            let particle_x = lander_pos.x + engine_offset_x - tip.0 * 17.0 / SCALE;
+            let particle_y = lander_pos.y + engine_offset_y + tip.1 * SIDE_ENGINE_HEIGHT / SCALE;
+
+            // Add some randomness
+            let rand_x = self.rng.random_range(-1.0..1.0) / SCALE;
+            let rand_y = self.rng.random_range(-1.0..1.0) / SCALE;
+
+            particle_body_def
+                .position
+                .set(particle_x + rand_x, particle_y + rand_y);
+            particle_body_def.angle = lander_angle + self.rng.random_range(-0.1..0.1);
+
+            let particle = B2world::create_body(world.clone(), &particle_body_def);
+
+            // Create a small circular shape for the particle (even smaller for side engines)
+            let mut particle_shape = B2polygonShape::default();
+            particle_shape.set_as_box(0.4 / SCALE, 0.4 / SCALE);
+
+            let mut fixture_def = B2fixtureDef::default();
+            fixture_def.shape = Some(Rc::new(RefCell::new(particle_shape)));
+            fixture_def.density = 0.05;
+            fixture_def.friction = 0.0;
+            fixture_def.filter.category_bits = 0x0100; // Different category so they don't collide with lander
+            fixture_def.filter.mask_bits = 0x0000; // Don't collide with anything
+
+            B2body::create_fixture(particle.clone(), &fixture_def);
+
+            // Apply velocity to particle (side flame effect)
+            let flame_vel_x = -side.0 * direction * (10.0 + self.rng.random_range(-3.0..3.0));
+            let flame_vel_y = -side.1 * direction * (10.0 + self.rng.random_range(-3.0..3.0));
+
+            particle
+                .borrow_mut()
+                .set_linear_velocity(B2vec2::new(flame_vel_x, flame_vel_y));
+
+            self.particles.push(Particle::new(particle, 0.4)); // 0.4 second lifetime for side engine particles
+        }
+    }
 }
 
 impl Default for LunarLanderV3 {
     fn default() -> Self {
-        Self::new(-10.0, false, 15.0, 1.5)
+        LunarLanderV3::builder().build()
     }
 }
 
@@ -589,8 +923,8 @@ impl Gym for LunarLanderV3 {
         use rand::Rng;
 
         assert!(self.lander.is_some(), "You forgot to call reset()");
-        let world = self.world.as_ref().unwrap();
-        let lander = self.lander.as_ref().unwrap();
+        let world = self.world.as_ref().unwrap().clone();
+        let lander = self.lander.as_ref().unwrap().clone();
 
         let action_u32 = action.to_vec0::<u32>()?;
 
@@ -672,6 +1006,15 @@ impl Gym for LunarLanderV3 {
                 B2vec2::new(impulse_pos.0, impulse_pos.1),
                 true,
             );
+
+            // Create main engine particles
+            self.create_main_engine_particles(
+                world.clone(),
+                &lander_pos,
+                lander_angle,
+                &tip,
+                &dispersion,
+            );
         }
 
         let mut s_power = 0.0;
@@ -705,10 +1048,44 @@ impl Gym for LunarLanderV3 {
                 B2vec2::new(impulse_pos.0, impulse_pos.1),
                 true,
             );
+
+            // Create side engine particles
+            self.create_side_engine_particles(
+                world.clone(),
+                &lander_pos,
+                lander_angle,
+                &tip,
+                &side,
+                direction,
+                &dispersion,
+            );
         }
 
         // Step the world
         world.borrow_mut().step(1.0 / FPS, 6 * 30, 2 * 30);
+
+        // Update and clean up particles
+        let dt = 1.0 / FPS;
+        self.particles.retain_mut(|particle| {
+            let still_alive = particle.update(dt);
+            if !still_alive {
+                // Remove the physics body when particle dies
+                world.borrow_mut().destroy_body(particle.body.clone());
+                false
+            } else {
+                // Also check bounds
+                let pos = particle.body.borrow().get_position();
+                let bounds_check = pos.x > -2.0 * VIEWPORT_W / SCALE
+                    && pos.x < 3.0 * VIEWPORT_W / SCALE
+                    && pos.y > -50.0 / SCALE;
+                if !bounds_check {
+                    world.borrow_mut().destroy_body(particle.body.clone());
+                    false
+                } else {
+                    true
+                }
+            }
+        });
 
         // Get state
         let pos = lander.borrow().get_position();
@@ -773,6 +1150,9 @@ impl Gym for LunarLanderV3 {
             terminated = true;
             reward = 100.0;
         }
+
+        #[cfg(feature = "rendering")]
+        self.render();
 
         Ok(StepInfo {
             state: state_tensor,
@@ -1175,7 +1555,7 @@ mod tests {
 
     #[test]
     fn test_lunar_lander_with_wind() {
-        let mut env = LunarLanderV3::new(-10.0, true, 15.0, 1.5);
+        let mut env = LunarLanderV3::builder().enable_wind(true).build();
         env.reset().expect("Failed to reset environment");
 
         // Test with wind enabled
@@ -1234,5 +1614,37 @@ mod tests {
             // Not an AMAZING tolerance, but I think close enough to give the same value in reinforcement learning
             Some(Tolerances::new(5.0, 0.2)),
         );
+    }
+
+    #[cfg(feature = "rendering")]
+    #[test]
+    fn test_lunar_lander_rendering() {
+        let mut env = LunarLanderV3::builder().render(true).build();
+        env.reset().expect("Failed to reset environment");
+
+        // Step a few times and render, cycling through different actions to test particle rendering
+        for i in 0..1000 {
+            // Cycle through actions: 0 (nothing), 1 (left), 2 (main), 3 (right)
+            let action_value = match i % 20 {
+                0..=4 => 0u32,   // Do nothing for 5 steps
+                5..=9 => 2u32,   // Fire main engine for 5 steps
+                10..=14 => 1u32, // Fire left engine for 5 steps
+                15..=19 => 3u32, // Fire right engine for 5 steps
+                _ => 0u32,
+            };
+
+            let action = Tensor::from_vec(vec![action_value], vec![], &Device::Cpu)
+                .expect("Failed to create action tensor");
+            let StepInfo {
+                state: _,
+                reward: _,
+                done,
+                truncated: _,
+            } = env.step(action).expect("Failed to step environment");
+
+            if done {
+                env.reset().expect("Failed to reset environment");
+            }
+        }
     }
 }

@@ -26,7 +26,7 @@ pub struct MountainCarV0 {
 impl MountainCarV0 {
     #[builder]
     pub fn new(
-        device: &Device,
+        #[builder(default = &Device::Cpu)] device: &Device,
         #[cfg(feature = "rendering")]
         #[builder(default = false)]
         render: bool,
@@ -268,7 +268,7 @@ impl MountainCarV0 {
 
 impl Default for MountainCarV0 {
     fn default() -> Self {
-        MountainCarV0::builder().device(&Device::Cpu).build()
+        MountainCarV0::builder().build()
     }
 }
 
@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn test_mountain_car() {
-        let mut env = MountainCarV0::builder().device(&Device::Cpu).build();
+        let mut env = MountainCarV0::builder().build();
         let state = env.reset().expect("Failed to reset environment.");
         assert_eq!(state.shape().dim(0).expect("Failed to get state dim."), 2);
         let StepInfo {
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_mountain_car_invalid_action() {
-        let mut env = MountainCarV0::builder().device(&Device::Cpu).build();
+        let mut env = MountainCarV0::builder().build();
         let _state = env.reset();
         let _info = env
             .step(
@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     fn reward_is_negative_one_when_not_terminated() {
-        let mut env = MountainCarV0::builder().device(&Device::Cpu).build();
+        let mut env = MountainCarV0::builder().build();
         env.reset().unwrap();
         let action = Tensor::from_vec(vec![1u32], vec![], &Device::Cpu).unwrap();
         let StepInfo {
@@ -417,20 +417,13 @@ mod tests {
 
     #[test]
     fn test_mountain_car_against_python() {
-        test_gym_against_python(
-            "mountain_car",
-            MountainCarV0::builder().device(&Device::Cpu).build(),
-            None,
-        );
+        test_gym_against_python("mountain_car", MountainCarV0::builder().build(), None);
     }
 
     #[cfg(feature = "rendering")]
     #[test]
     fn test_mountain_car_rendering() {
-        let mut env = MountainCarV0::builder()
-            .device(&Device::Cpu)
-            .render(true)
-            .build();
+        let mut env = MountainCarV0::builder().render(true).build();
         env.reset().unwrap();
         let action_space = env.action_space();
         for _ in 0..200 {

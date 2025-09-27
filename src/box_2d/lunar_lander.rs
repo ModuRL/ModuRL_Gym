@@ -236,6 +236,8 @@ pub struct LunarLanderV3 {
     // Deterministic mode flag for testing
     deterministic_mode: bool,
 
+    device: Device,
+
     #[cfg(feature = "rendering")]
     renderer: Option<Renderer>,
 }
@@ -248,6 +250,7 @@ impl LunarLanderV3 {
         #[builder(default = false)] enable_wind: bool,
         #[builder(default = 15.0)] wind_power: f32,
         #[builder(default = 1.5)] turbulence_power: f32,
+        #[builder(default = Device::Cpu)] device: Device,
         #[cfg(feature = "rendering")]
         #[builder(default = false)]
         render: bool,
@@ -295,6 +298,7 @@ impl LunarLanderV3 {
             torque_idx: 0,
             rng: rand::rng(),
             deterministic_mode: false,
+            device,
             #[cfg(feature = "rendering")]
             renderer: if render {
                 Some(Renderer::new(
@@ -406,11 +410,11 @@ impl LunarLanderV3 {
                 if leg_contact_2 { 1.0 } else { 0.0 },
             ];
 
-            Tensor::from_vec(state, vec![8], &Device::Cpu)
+            Tensor::from_vec(state, vec![8], &self.device)
         } else {
             // Return zeros if no lander exists
             let state = vec![0.0f32; 8];
-            Tensor::from_vec(state, vec![8], &Device::Cpu)
+            Tensor::from_vec(state, vec![8], &self.device)
         }
     }
 
@@ -949,7 +953,7 @@ impl Gym for LunarLanderV3 {
         }
 
         // Step once to ensure proper initialization
-        let step_info = self.step(Tensor::from_vec(vec![0u32], vec![], &Device::Cpu)?)?;
+        let step_info = self.step(Tensor::from_vec(vec![0u32], vec![], &self.device)?)?;
 
         #[cfg(feature = "rendering")]
         self.render();
@@ -1159,7 +1163,7 @@ impl Gym for LunarLanderV3 {
             if leg_contact_2 { 1.0 } else { 0.0 },
         ];
 
-        let state_tensor = Tensor::from_vec(state.clone(), vec![8], &Device::Cpu)?;
+        let state_tensor = Tensor::from_vec(state.clone(), vec![8], &self.device)?;
 
         // Calculate reward
         let mut reward = 0.0;
@@ -1227,9 +1231,9 @@ impl Gym for LunarLanderV3 {
             1.0,
         ];
         let low_tensor =
-            Tensor::from_vec(low, vec![8], &Device::Cpu).expect("Failed to create low tensor");
+            Tensor::from_vec(low, vec![8], &self.device).expect("Failed to create low tensor");
         let high_tensor =
-            Tensor::from_vec(high, vec![8], &Device::Cpu).expect("Failed to create high tensor");
+            Tensor::from_vec(high, vec![8], &self.device).expect("Failed to create high tensor");
         Box::new(spaces::BoxSpace::new(low_tensor, high_tensor))
     }
 

@@ -21,7 +21,7 @@ serde_json = "1.0"
 candle-core = { git = "https://github.com/huggingface/candle", rev = "41a674c" }
 
 [features]
-default = ["rendering"]
+default = []
 tracing = ["dep:tracing"]
 logging = ["dep:log"]
 rendering = ["dep:minifb"]

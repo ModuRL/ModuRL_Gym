@@ -75,6 +75,7 @@ impl UserDataType for UserDataTypes {
 }
 
 // Particle struct for engine flames with time-to-live
+#[cfg(feature = "rendering")]
 #[derive(Clone)]
 struct Particle {
     body: BodyPtr<UserDataTypes>,
@@ -82,6 +83,7 @@ struct Particle {
     initial_ttl: f32,
 }
 
+#[cfg(feature = "rendering")]
 impl Particle {
     fn new(body: BodyPtr<UserDataTypes>, ttl: f32) -> Self {
         Self {
@@ -207,6 +209,7 @@ pub struct LunarLanderV3 {
     lander: Option<BodyPtr<UserDataTypes>>,
     legs: Vec<BodyPtr<UserDataTypes>>,
     leg_joints: Vec<B2jointPtr<UserDataTypes>>,
+    #[cfg(feature = "rendering")]
     particles: Vec<Particle>,
 
     // Contact detection
@@ -279,6 +282,7 @@ impl LunarLanderV3 {
             lander: None,
             legs: Vec::new(),
             leg_joints: Vec::new(),
+            #[cfg(feature = "rendering")]
             particles: Vec::new(),
             contact_detector: None,
             game_over: false,
@@ -306,11 +310,14 @@ impl LunarLanderV3 {
 
     fn destroy(&mut self) {
         if let Some(world) = self.world.take() {
-            // Clean up particles
-            for particle in &self.particles {
-                world.borrow_mut().destroy_body(particle.body.clone());
+            #[cfg(feature = "rendering")]
+            {
+                // Clean up particles
+                for particle in &self.particles {
+                    world.borrow_mut().destroy_body(particle.body.clone());
+                }
+                self.particles.clear();
             }
-            self.particles.clear();
 
             // Destroy joints first
             for joint in self.leg_joints.drain(..) {
@@ -626,6 +633,7 @@ impl LunarLanderV3 {
         }
     }
 
+    #[cfg(feature = "rendering")]
     // Particle creation methods
     fn create_main_engine_particles(
         &mut self,
@@ -681,6 +689,7 @@ impl LunarLanderV3 {
         self.particles.push(Particle::new(particle, 0.5)); // 0.5 second lifetime for main engine particles (faster fade like original)
     }
 
+    #[cfg(feature = "rendering")]
     fn create_side_engine_particles(
         &mut self,
         world: B2worldPtr<UserDataTypes>,
@@ -1033,6 +1042,7 @@ impl Gym for LunarLanderV3 {
                 true,
             );
 
+            #[cfg(feature = "rendering")]
             // Create main engine particles
             self.create_main_engine_particles(
                 world.clone(),
@@ -1075,6 +1085,7 @@ impl Gym for LunarLanderV3 {
                 true,
             );
 
+            #[cfg(feature = "rendering")]
             // Create side engine particles
             self.create_side_engine_particles(
                 world.clone(),
@@ -1090,28 +1101,31 @@ impl Gym for LunarLanderV3 {
         // Step the world
         world.borrow_mut().step(1.0 / FPS, 6 * 30, 2 * 30);
 
-        // Update and clean up particles
-        let dt = 1.0 / FPS;
-        self.particles.retain_mut(|particle| {
-            let still_alive = particle.update(dt);
-            if !still_alive {
-                // Remove the physics body when particle dies
-                world.borrow_mut().destroy_body(particle.body.clone());
-                false
-            } else {
-                // Also check bounds
-                let pos = particle.body.borrow().get_position();
-                let bounds_check = pos.x > -2.0 * VIEWPORT_W / SCALE
-                    && pos.x < 3.0 * VIEWPORT_W / SCALE
-                    && pos.y > -50.0 / SCALE;
-                if !bounds_check {
+        #[cfg(feature = "rendering")]
+        {
+            // Update and clean up particles
+            let dt = 1.0 / FPS;
+            self.particles.retain_mut(|particle| {
+                let still_alive = particle.update(dt);
+                if !still_alive {
+                    // Remove the physics body when particle dies
                     world.borrow_mut().destroy_body(particle.body.clone());
                     false
                 } else {
-                    true
+                    // Also check bounds
+                    let pos = particle.body.borrow().get_position();
+                    let bounds_check = pos.x > -2.0 * VIEWPORT_W / SCALE
+                        && pos.x < 3.0 * VIEWPORT_W / SCALE
+                        && pos.y > -50.0 / SCALE;
+                    if !bounds_check {
+                        world.borrow_mut().destroy_body(particle.body.clone());
+                        false
+                    } else {
+                        true
+                    }
                 }
-            }
-        });
+            });
+        }
 
         // Get state
         let pos = lander.borrow().get_position();

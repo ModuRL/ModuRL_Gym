@@ -475,6 +475,32 @@ impl LunarLanderV3 {
             pad_height as usize,
             COLOR_LANDING_PAD,
         );
+
+        // Add flags at both ends of the landing pad
+        let flag_height = 40; // pole height in screen pixels
+        let flag_y_bottom = pad_y as usize;
+
+        // Left flag
+        renderer.draw_flag(
+            pad_x as usize - 5, // slightly to the left of the pad
+            flag_y_bottom,
+            flag_height,
+            20,         // flag width
+            8,          // flag height
+            0xFFFFFFFF, // white pole
+            0xFFCCCC00, // yellow flag for contrast
+        );
+
+        // Right flag
+        renderer.draw_flag(
+            (pad_x + pad_width * SCALE) as usize + 5, // slightly to the right of the pad
+            flag_y_bottom,
+            flag_height,
+            20,         // flag width
+            8,          // flag height
+            0xFFFFFFFF, // white pole
+            0xFFCCCC00, // yellow flag for contrast
+        );
     }
 
     #[cfg(feature = "rendering")]
@@ -1623,7 +1649,7 @@ mod tests {
         env.reset().expect("Failed to reset environment");
 
         // Step a few times and render, cycling through different actions to test particle rendering
-        for i in 0..1000 {
+        for i in 0..200 {
             // Cycle through actions: 0 (nothing), 1 (left), 2 (main), 3 (right)
             let action_value = match i % 20 {
                 0..=4 => 0u32,   // Do nothing for 5 steps

@@ -78,4 +78,59 @@ impl Renderer {
             }
         }
     }
+
+    pub fn get_width(&self) -> usize {
+        self.w
+    }
+    pub fn get_height(&self) -> usize {
+        self.h
+    }
+
+    /// Draw a flag with pole at the specified position
+    ///
+    /// # Arguments
+    /// * `flag_x` - X position of the flag pole
+    /// * `flag_y_bottom` - Y position of the bottom of the flag pole
+    /// * `pole_height` - Height of the flag pole
+    /// * `flag_width` - Width of the triangular flag
+    /// * `flag_height` - Height of the triangular flag  
+    /// * `pole_color` - Color of the flag pole (e.g., 0x000000 for black)
+    /// * `flag_color` - Color of the flag (e.g., 0xCCCC00 for yellow)
+    pub fn draw_flag(
+        &mut self,
+        flag_x: usize,
+        flag_y_bottom: usize,
+        pole_height: usize,
+        flag_width: usize,
+        flag_height: usize,
+        pole_color: u32,
+        flag_color: u32,
+    ) {
+        let flag_y_top = flag_y_bottom.saturating_sub(pole_height);
+
+        // Draw flag pole (vertical line)
+        for y in flag_y_top..=flag_y_bottom {
+            if flag_x < self.w && y < self.h {
+                self.rect(flag_x, y, 2, 1, pole_color);
+            }
+        }
+
+        // Draw flag (triangle) with point vertically centered
+        // Fill the triangular flag area
+        for y_offset in 0..flag_height {
+            let distance_from_center = ((y_offset as i32) - (flag_height as i32 / 2)).abs();
+            let width_at_y = flag_width as i32 * (flag_height as i32 / 2 - distance_from_center)
+                / (flag_height as i32 / 2);
+
+            if width_at_y > 0 {
+                for x_offset in 0..width_at_y {
+                    let px = flag_x + 2 + x_offset as usize; // Start after the pole
+                    let py = flag_y_top + y_offset;
+                    if px < self.w && py < self.h {
+                        self.rect(px, py, 1, 1, flag_color);
+                    }
+                }
+            }
+        }
+    }
 }

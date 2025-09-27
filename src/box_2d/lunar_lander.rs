@@ -951,6 +951,9 @@ impl Gym for LunarLanderV3 {
         // Step once to ensure proper initialization
         let step_info = self.step(Tensor::from_vec(vec![0u32], vec![], &Device::Cpu)?)?;
 
+        #[cfg(feature = "rendering")]
+        self.render();
+
         Ok(step_info.state)
     }
 

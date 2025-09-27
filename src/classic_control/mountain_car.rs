@@ -286,6 +286,10 @@ impl Gym for MountainCarV0 {
         let velocity = Tensor::zeros(vec![1], candle_core::DType::F32, self.state.device())?;
 
         self.state = Tensor::cat(&[position, velocity], 0)?;
+
+        #[cfg(feature = "rendering")]
+        self.render();
+
         Ok(self.state.clone())
     }
 

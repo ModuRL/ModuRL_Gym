@@ -79,6 +79,24 @@ impl Renderer {
         }
     }
 
+    pub fn draw_circle(&mut self, center_x: usize, center_y: usize, radius: usize, color: u32) {
+        let radius_sq = (radius * radius) as isize;
+        let x_start = center_x.saturating_sub(radius).max(0);
+        let x_end = (center_x + radius).min(self.w - 1);
+        let y_start = center_y.saturating_sub(radius).max(0);
+        let y_end = (center_y + radius).min(self.h - 1);
+
+        for y in y_start..=y_end {
+            for x in x_start..=x_end {
+                let dx = x as isize - center_x as isize;
+                let dy = y as isize - center_y as isize;
+                if dx * dx + dy * dy <= radius_sq {
+                    self.buffer[y * self.w + x] = color;
+                }
+            }
+        }
+    }
+
     pub fn get_width(&self) -> usize {
         self.w
     }

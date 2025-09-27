@@ -151,7 +151,7 @@ impl B2contactListener<UserDataTypes> for ContactDetector {
 /// - 1: fire left orientation engine  
 /// - 2: fire main engine
 /// - 3: fire right orientation engine
-pub struct LunarLander {
+pub struct LunarLanderV3 {
     // Environment parameters
     gravity: f32,
     enable_wind: bool,
@@ -197,7 +197,7 @@ pub struct LunarLander {
     deterministic_mode: bool,
 }
 
-impl LunarLander {
+impl LunarLanderV3 {
     pub fn new(gravity: f32, enable_wind: bool, wind_power: f32, turbulence_power: f32) -> Self {
         assert!(
             -12.0 < gravity && gravity < 0.0,
@@ -381,13 +381,13 @@ impl LunarLander {
     }
 }
 
-impl Default for LunarLander {
+impl Default for LunarLanderV3 {
     fn default() -> Self {
         Self::new(-10.0, false, 15.0, 1.5)
     }
 }
 
-impl Gym for LunarLander {
+impl Gym for LunarLanderV3 {
     type Error = candle_core::Error;
 
     fn get_name(&self) -> &str {
@@ -821,7 +821,7 @@ mod tests {
     use super::*;
     use crate::testing::{Testable, Tolerances, test_gym_against_python};
 
-    impl Testable for LunarLander {
+    impl Testable for LunarLanderV3 {
         fn reset_deterministic(&mut self) -> Result<Tensor, candle_core::Error> {
             // Do a deterministic reset that controls all random elements
             self.destroy();
@@ -1132,20 +1132,20 @@ mod tests {
 
     #[test]
     fn test_lunar_lander_creation() {
-        let env = LunarLander::default();
+        let env = LunarLanderV3::default();
         assert_eq!(env.get_name(), "LunarLander");
     }
 
     #[test]
     fn test_lunar_lander_reset() {
-        let mut env = LunarLander::default();
+        let mut env = LunarLanderV3::default();
         let state = env.reset().expect("Failed to reset environment");
         assert_eq!(state.dims(), &[8]);
     }
 
     #[test]
     fn test_lunar_lander_step() {
-        let mut env = LunarLander::default();
+        let mut env = LunarLanderV3::default();
         env.reset().expect("Failed to reset environment");
 
         let action = Tensor::from_vec(vec![0u32], vec![], &Device::Cpu)
@@ -1158,7 +1158,7 @@ mod tests {
 
     #[test]
     fn test_lunar_lander_actions() {
-        let mut env = LunarLander::default();
+        let mut env = LunarLanderV3::default();
         env.reset().expect("Failed to reset environment");
 
         // Test all four discrete actions
@@ -1175,7 +1175,7 @@ mod tests {
 
     #[test]
     fn test_lunar_lander_with_wind() {
-        let mut env = LunarLander::new(-10.0, true, 15.0, 1.5);
+        let mut env = LunarLanderV3::new(-10.0, true, 15.0, 1.5);
         env.reset().expect("Failed to reset environment");
 
         // Test with wind enabled
@@ -1189,7 +1189,7 @@ mod tests {
 
     #[test]
     fn test_lunar_lander_deterministic_reset() {
-        let mut env = LunarLander::default();
+        let mut env = LunarLanderV3::default();
         let state1 = env
             .reset_deterministic()
             .expect("Failed to reset deterministically");
@@ -1230,7 +1230,7 @@ mod tests {
     fn test_lunar_lander_against_python() {
         test_gym_against_python(
             "lunar_lander",
-            LunarLander::default(),
+            LunarLanderV3::default(),
             // Not an AMAZING tolerance, but I think close enough to give the same value in reinforcement learning
             Some(Tolerances::new(5.0, 0.2)),
         );

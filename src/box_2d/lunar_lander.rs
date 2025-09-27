@@ -594,18 +594,6 @@ impl Gym for LunarLander {
 
         let action_u32 = action.to_vec0::<u32>()?;
 
-        // Debug step counter
-        static mut STEP_COUNT: i32 = 0;
-        unsafe {
-            STEP_COUNT += 1;
-        }
-        let step_num = unsafe { STEP_COUNT };
-
-        println!(
-            "STEP {}: Starting with game_over={}",
-            step_num, self.game_over
-        );
-
         // Update wind and apply to the lander
         if self.enable_wind {
             let legs_contact = self.legs.len() >= 2

@@ -234,10 +234,6 @@ impl Default for CartPoleV1 {
 impl Gym for CartPoleV1 {
     type Error = candle_core::Error;
 
-    fn get_name(&self) -> &str {
-        "CartPoleV1"
-    }
-
     fn reset(&mut self) -> Result<Tensor, Self::Error> {
         self.steps_beyond_terminated = None;
         let state = Tensor::rand(-0.05, 0.05, vec![4], self.state.device())?

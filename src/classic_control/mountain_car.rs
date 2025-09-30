@@ -275,10 +275,6 @@ impl Default for MountainCarV0 {
 impl Gym for MountainCarV0 {
     type Error = candle_core::Error;
 
-    fn get_name(&self) -> &str {
-        "MountainCarV0"
-    }
-
     fn reset(&mut self) -> Result<Tensor, Self::Error> {
         // Initialize position uniformly between -0.6 and -0.4
         let position = Tensor::rand(-0.6, -0.4, vec![1], self.state.device())?

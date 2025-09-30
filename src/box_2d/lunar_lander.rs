@@ -763,10 +763,6 @@ impl Default for LunarLanderV3 {
 impl Gym for LunarLanderV3 {
     type Error = candle_core::Error;
 
-    fn get_name(&self) -> &str {
-        "LunarLander"
-    }
-
     fn reset(&mut self) -> Result<Tensor, Self::Error> {
         use rand::Rng;
 
@@ -1555,12 +1551,6 @@ mod tests {
                 contact_detector.borrow_mut().legs_ground_contact[1] = leg1_contact;
             }
         }
-    }
-
-    #[test]
-    fn test_lunar_lander_creation() {
-        let env = LunarLanderV3::default();
-        assert_eq!(env.get_name(), "LunarLander");
     }
 
     #[test]

@@ -18,10 +18,11 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 [patch.crates-io]
-candle-core = { git = "https://github.com/huggingface/candle", rev = "41a674c" }
+candle-core = { git = "https://github.com/huggingface/candle", rev = "d205fb4" }
 
 [features]
 default = []
 tracing = ["dep:tracing"]
 logging = ["dep:log"]
 rendering = ["dep:minifb"]
+cuda = ["candle-core/cuda"]

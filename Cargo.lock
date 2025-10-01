@@ -109,28 +109,6 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 [[package]]
 name = "candle-core"
 version = "0.9.1"
-source = "git+https://github.com/huggingface/candle?rev=41a674c#41a674ce8d1e37a9f8c6a97ff758552eddfd389a"
-dependencies = [
- "byteorder",
- "float8 0.4.2",
- "gemm 0.17.1",
- "half",
- "memmap2",
- "num-traits",
- "num_cpus",
- "rand",
- "rand_distr",
- "rayon",
- "safetensors",
- "thiserror",
- "ug 0.4.0",
- "yoke",
- "zip",
-]
-
-[[package]]
-name = "candle-core"
-version = "0.9.1"
 source = "git+https://github.com/huggingface/candle?rev=d205fb4#d205fb41ae41b138b2c178b9c5d34591f1ffd07e"
 dependencies = [
  "byteorder",
@@ -147,7 +125,7 @@ dependencies = [
  "rayon",
  "safetensors",
  "thiserror",
- "ug 0.5.0",
+ "ug",
  "ug-cuda",
  "yoke",
  "zip",
@@ -167,7 +145,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1980d53280c8f9e2c6cbe1785855d7ff8010208b46e21252b978badf13ad69d"
 dependencies = [
- "candle-core 0.9.1 (git+https://github.com/huggingface/candle?rev=d205fb4)",
+ "candle-core",
  "half",
  "num-traits",
  "rayon",
@@ -946,10 +924,10 @@ dependencies = [
 [[package]]
 name = "modurl"
 version = "0.1.0"
-source = "git+https://github.com/ModuRL/ModuRL#0779192f44246dc6a190ac2c3701e9f61ad92f9e"
+source = "git+https://github.com/ModuRL/ModuRL#902ec0673bc695f3ba6f17e10ba8f38139d84563"
 dependencies = [
  "bon",
- "candle-core 0.9.1 (git+https://github.com/huggingface/candle?rev=41a674c)",
+ "candle-core",
  "candle-nn",
  "rand",
 ]
@@ -960,7 +938,7 @@ version = "0.1.0"
 dependencies = [
  "bon",
  "box2d-rs",
- "candle-core 0.9.1 (git+https://github.com/huggingface/candle?rev=d205fb4)",
+ "candle-core",
  "log",
  "minifb",
  "modurl",
@@ -1605,27 +1583,6 @@ dependencies = [
 
 [[package]]
 name = "ug"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90b70b37e9074642bc5f60bb23247fd072a84314ca9e71cdf8527593406a0dd3"
-dependencies = [
- "gemm 0.18.2",
- "half",
- "libloading",
- "memmap2",
- "num",
- "num-traits",
- "num_cpus",
- "rayon",
- "safetensors",
- "serde",
- "thiserror",
- "tracing",
- "yoke",
-]
-
-[[package]]
-name = "ug"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76b761acf8af3494640d826a8609e2265e19778fb43306c7f15379c78c9b05b0"
@@ -1655,7 +1612,7 @@ dependencies = [
  "half",
  "serde",
  "thiserror",
- "ug 0.5.0",
+ "ug",
 ]
 
 [[package]]

@@ -112,8 +112,6 @@ version = "0.9.1"
 source = "git+https://github.com/huggingface/candle?rev=41a674c#41a674ce8d1e37a9f8c6a97ff758552eddfd389a"
 dependencies = [
  "byteorder",
- "candle-kernels",
- "cudarc 0.17.3",
  "float8 0.4.2",
  "gemm 0.17.1",
  "half",
@@ -126,7 +124,6 @@ dependencies = [
  "safetensors",
  "thiserror",
  "ug 0.4.0",
- "ug-cuda",
  "yoke",
  "zip",
 ]
@@ -137,6 +134,8 @@ version = "0.9.1"
 source = "git+https://github.com/huggingface/candle?rev=d205fb4#d205fb41ae41b138b2c178b9c5d34591f1ffd07e"
 dependencies = [
  "byteorder",
+ "candle-kernels",
+ "cudarc",
  "float8 0.4.2",
  "gemm 0.17.1",
  "half",
@@ -149,6 +148,7 @@ dependencies = [
  "safetensors",
  "thiserror",
  "ug 0.5.0",
+ "ug-cuda",
  "yoke",
  "zip",
 ]
@@ -156,7 +156,7 @@ dependencies = [
 [[package]]
 name = "candle-kernels"
 version = "0.9.1"
-source = "git+https://github.com/huggingface/candle?rev=41a674c#41a674ce8d1e37a9f8c6a97ff758552eddfd389a"
+source = "git+https://github.com/huggingface/candle?rev=d205fb4#d205fb41ae41b138b2c178b9c5d34591f1ffd07e"
 dependencies = [
  "bindgen_cuda",
 ]
@@ -241,16 +241,6 @@ name = "crunchy"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
-
-[[package]]
-name = "cudarc"
-version = "0.16.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17200eb07e7d85a243aa1bf4569a7aa998385ba98d14833973a817a63cc86e92"
-dependencies = [
- "half",
- "libloading",
-]
 
 [[package]]
 name = "cudarc"
@@ -415,7 +405,7 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4203231de188ebbdfb85c11f3c20ca2b063945710de04e7b59268731e728b462"
 dependencies = [
- "cudarc 0.17.3",
+ "cudarc",
  "half",
  "num-traits",
  "rand",
@@ -970,7 +960,7 @@ version = "0.1.0"
 dependencies = [
  "bon",
  "box2d-rs",
- "candle-core 0.9.1 (git+https://github.com/huggingface/candle?rev=41a674c)",
+ "candle-core 0.9.1 (git+https://github.com/huggingface/candle?rev=d205fb4)",
  "log",
  "minifb",
  "modurl",
@@ -1657,15 +1647,15 @@ dependencies = [
 
 [[package]]
 name = "ug-cuda"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14053653d0b7fa7b21015aa9a62edc8af2f60aa6f9c54e66386ecce55f22ed29"
+checksum = "9f0a1fa748f26166778c33b8498255ebb7c6bffb472bcc0a72839e07ebb1d9b5"
 dependencies = [
- "cudarc 0.16.6",
+ "cudarc",
  "half",
  "serde",
  "thiserror",
- "ug 0.4.0",
+ "ug 0.5.0",
 ]
 
 [[package]]

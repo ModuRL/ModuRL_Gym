@@ -1684,4 +1684,78 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_lunar_lander_determinism_seeded() {
+        let mut env1 = LunarLanderV3::builder().seed(42).enable_wind(true).build();
+        let mut env2 = LunarLanderV3::builder().seed(42).enable_wind(true).build();
+
+        let state1 = env1.reset_deterministic().expect("Failed to reset env1");
+        let state2 = env2.reset_deterministic().expect("Failed to reset env2");
+
+        // States should be the same size
+        assert_eq!(state1.dims(), state2.dims());
+        assert_eq!(state1.dims(), &[8]);
+
+        // The states might not be identical due to random terrain generation
+        // but they should be reasonable values
+        let state1_vec = state1
+            .to_vec1::<f32>()
+            .expect("Failed to convert state1 to vec");
+        let state2_vec = state2
+            .to_vec1::<f32>()
+            .expect("Failed to convert state2 to vec");
+
+        for (i, (&val1, &val2)) in state1_vec.iter().zip(state2_vec.iter()).enumerate() {
+            assert!(
+                val1.is_finite(),
+                "State {} should be finite, got {}",
+                i,
+                val1
+            );
+            assert!(
+                val2.is_finite(),
+                "State {} should be finite, got {}",
+                i,
+                val2
+            );
+        }
+
+        // Step both environments with the same actions and compare states
+        for step in 0..50 {
+            let action_value = step % 4; // Cycle through actions 0, 1, 2, 3
+            let action = Tensor::from_vec(vec![action_value as u32], vec![], &Device::Cpu)
+                .expect("Failed to create action tensor");
+
+            let step_info1 = env1.step(action.clone()).expect("Failed to step env1");
+            let step_info2 = env2.step(action).expect("Failed to step env2");
+
+            let state1 = step_info1.state;
+            let state2 = step_info2.state;
+
+            // States should be the same size
+            assert_eq!(state1.dims(), state2.dims());
+            assert_eq!(state1.dims(), &[8]);
+
+            let state1_vec = state1
+                .to_vec1::<f32>()
+                .expect("Failed to convert state1 to vec");
+            let state2_vec = state2
+                .to_vec1::<f32>()
+                .expect("Failed to convert state2 to vec");
+            for (i, (&val1, &val2)) in state1_vec.iter().zip(state2_vec.iter()).enumerate() {
+                assert!(
+                    (val1 - val2).abs() < 1e-5,
+                    "State {} differs between envs: {} vs {}",
+                    i,
+                    val1,
+                    val2
+                );
+            }
+            if step_info1.done || step_info2.done {
+                env1.reset().expect("Failed to reset env1");
+                env2.reset().expect("Failed to reset env2");
+            }
+        }
+    }
 }

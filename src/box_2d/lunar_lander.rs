@@ -70,7 +70,7 @@ impl EnvRng {
 
 impl Default for EnvRng {
     fn default() -> Self {
-        EnvRng::Thread(rand::rngs::ThreadRng::default())
+        EnvRng::Thread(rand::rng())
     }
 }
 
@@ -1002,14 +1002,16 @@ impl Gym for LunarLanderV3 {
             );
 
             #[cfg(feature = "rendering")]
-            // Create main engine particles
-            self.create_main_engine_particles(
-                world.clone(),
-                &lander_pos,
-                lander_angle,
-                &tip,
-                &dispersion,
-            );
+            if self.renderer.is_some() {
+                // Create main engine particles
+                self.create_main_engine_particles(
+                    world.clone(),
+                    &lander_pos,
+                    lander_angle,
+                    &tip,
+                    &dispersion,
+                );
+            }
         }
 
         let mut s_power = 0.0;
@@ -1045,23 +1047,25 @@ impl Gym for LunarLanderV3 {
             );
 
             #[cfg(feature = "rendering")]
-            // Create side engine particles
-            self.create_side_engine_particles(
-                world.clone(),
-                &lander_pos,
-                lander_angle,
-                &tip,
-                &side,
-                direction,
-                &dispersion,
-            );
+            if self.renderer.is_some() {
+                // Create side engine particles
+                self.create_side_engine_particles(
+                    world.clone(),
+                    &lander_pos,
+                    lander_angle,
+                    &tip,
+                    &side,
+                    direction,
+                    &dispersion,
+                );
+            }
         }
 
         // Step the world
         world.borrow_mut().step(1.0 / FPS, 6 * 30, 2 * 30);
 
         #[cfg(feature = "rendering")]
-        {
+        if self.renderer.is_some() {
             // Update and clean up particles
             let dt = 1.0 / FPS;
             self.particles.retain_mut(|particle| {

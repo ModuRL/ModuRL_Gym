@@ -18,6 +18,9 @@ use modurl::{
     gym::{Gym, StepInfo},
     spaces::{self, Space},
 };
+use rand::Rng;
+use rand::distr::uniform::SampleRange;
+use rand::distr::uniform::SampleUniform;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -53,6 +56,36 @@ const MAIN_ENGINE_Y_LOCATION: f32 = 4.0; // The Y location of the main engine on
 
 const VIEWPORT_W: f32 = 600.0;
 const VIEWPORT_H: f32 = 400.0;
+
+enum EnvRng {
+    Thread(rand::rngs::ThreadRng),
+    Seeded(rand::rngs::StdRng),
+}
+
+impl EnvRng {
+    fn from_seed(seed: u64) -> Self {
+        EnvRng::Seeded(rand::SeedableRng::seed_from_u64(seed))
+    }
+}
+
+impl Default for EnvRng {
+    fn default() -> Self {
+        EnvRng::Thread(rand::rng())
+    }
+}
+
+impl EnvRng {
+    pub fn random_range<T, R>(&mut self, range: R) -> T
+    where
+        T: SampleUniform,
+        R: SampleRange<T>,
+    {
+        match self {
+            EnvRng::Thread(rng) => rng.random_range(range),
+            EnvRng::Seeded(rng) => rng.random_range(range),
+        }
+    }
+}
 
 // Rendering colors (ARGB format)
 #[cfg(feature = "rendering")]
@@ -231,7 +264,7 @@ pub struct LunarLanderV3 {
     torque_idx: i32,
 
     // Random number generation
-    rng: rand::rngs::ThreadRng,
+    rng: EnvRng,
 
     // Deterministic mode flag for testing
     deterministic_mode: bool,
@@ -254,6 +287,7 @@ impl LunarLanderV3 {
         #[cfg(feature = "rendering")]
         #[builder(default = false)]
         render: bool,
+        seed: Option<u64>,
     ) -> Self {
         assert!(
             -12.0 < gravity && gravity < 0.0,
@@ -273,6 +307,11 @@ impl LunarLanderV3 {
                 "turbulence_power value is recommended to be between 0.0 and 2.0, (current value: {})",
                 turbulence_power
             );
+        }
+
+        let mut rng = EnvRng::default();
+        if let Some(s) = seed {
+            rng = EnvRng::from_seed(s);
         }
 
         Self {
@@ -296,7 +335,7 @@ impl LunarLanderV3 {
             sky_polys: Vec::new(),
             wind_idx: 0,
             torque_idx: 0,
-            rng: rand::rng(),
+            rng,
             deterministic_mode: false,
             device,
             #[cfg(feature = "rendering")]
@@ -315,7 +354,7 @@ impl LunarLanderV3 {
     fn destroy(&mut self) {
         if let Some(world) = self.world.take() {
             #[cfg(feature = "rendering")]
-            {
+            if self.renderer.is_some() {
                 // Clean up particles
                 for particle in &self.particles {
                     world.borrow_mut().destroy_body(particle.body.clone());
@@ -340,81 +379,6 @@ impl LunarLanderV3 {
             for leg in self.legs.drain(..) {
                 world.borrow_mut().destroy_body(leg);
             }
-        }
-    }
-
-    #[allow(dead_code)]
-    fn get_raw_physics_state(&self) -> Result<Vec<f32>, candle_core::Error> {
-        if let Some(lander) = &self.lander {
-            let pos = lander.borrow().get_position();
-            let vel = lander.borrow().get_linear_velocity();
-            let angle = lander.borrow().get_angle();
-            let angular_vel = lander.borrow().get_angular_velocity();
-
-            // Get leg contacts (simplified)
-            let leg_contact_1 = self
-                .contact_detector
-                .as_ref()
-                .map(|cd| cd.borrow().legs_ground_contact[0])
-                .unwrap_or(false);
-            let leg_contact_2 = self
-                .contact_detector
-                .as_ref()
-                .map(|cd| cd.borrow().legs_ground_contact[1])
-                .unwrap_or(false);
-
-            // Return raw physics state (not normalized)
-            Ok(vec![
-                pos.x,
-                pos.y,
-                vel.x,
-                vel.y,
-                angle,
-                angular_vel,
-                if leg_contact_1 { 1.0 } else { 0.0 },
-                if leg_contact_2 { 1.0 } else { 0.0 },
-            ])
-        } else {
-            Ok(vec![0.0f32; 8])
-        }
-    }
-
-    #[allow(dead_code)]
-    fn get_current_state(&self) -> Result<Tensor, candle_core::Error> {
-        if let Some(lander) = &self.lander {
-            let pos = lander.borrow().get_position();
-            let vel = lander.borrow().get_linear_velocity();
-            let angle = lander.borrow().get_angle();
-            let angular_vel = lander.borrow().get_angular_velocity();
-
-            // Get leg contacts (simplified - would need proper contact detection)
-            let leg_contact_1 = self
-                .contact_detector
-                .as_ref()
-                .map(|cd| cd.borrow().legs_ground_contact[0])
-                .unwrap_or(false);
-            let leg_contact_2 = self
-                .contact_detector
-                .as_ref()
-                .map(|cd| cd.borrow().legs_ground_contact[1])
-                .unwrap_or(false);
-
-            let state = vec![
-                (pos.x - VIEWPORT_W / SCALE / 2.0) / (VIEWPORT_W / SCALE / 2.0),
-                (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2.0),
-                vel.x * (VIEWPORT_W / SCALE / 2.0) / FPS,
-                vel.y * (VIEWPORT_H / SCALE / 2.0) / FPS,
-                angle,
-                20.0 * angular_vel / FPS,
-                if leg_contact_1 { 1.0 } else { 0.0 },
-                if leg_contact_2 { 1.0 } else { 0.0 },
-            ];
-
-            Tensor::from_vec(state, vec![8], &self.device)
-        } else {
-            // Return zeros if no lander exists
-            let state = vec![0.0f32; 8];
-            Tensor::from_vec(state, vec![8], &self.device)
         }
     }
 
@@ -647,8 +611,6 @@ impl LunarLanderV3 {
         tip: &(f32, f32),
         dispersion: &[f32; 2],
     ) {
-        use rand::Rng;
-
         let mut particle_body_def = B2bodyDef::default();
         particle_body_def.body_type = B2bodyType::B2DynamicBody;
 
@@ -704,8 +666,6 @@ impl LunarLanderV3 {
         direction: f32,
         dispersion: &[f32; 2],
     ) {
-        use rand::Rng;
-
         // Create particle for side engine flames (reduced count like original)
         for _ in 0..1 {
             let mut particle_body_def = B2bodyDef::default();
@@ -764,8 +724,6 @@ impl Gym for LunarLanderV3 {
     type Error = candle_core::Error;
 
     fn reset(&mut self) -> Result<Tensor, Self::Error> {
-        use rand::Rng;
-
         self.destroy();
 
         // Disable deterministic mode for normal reset
@@ -958,8 +916,6 @@ impl Gym for LunarLanderV3 {
     }
 
     fn step(&mut self, action: Tensor) -> Result<StepInfo, Self::Error> {
-        use rand::Rng;
-
         assert!(self.lander.is_some(), "You forgot to call reset()");
         let world = self.world.as_ref().unwrap().clone();
         let lander = self.lander.as_ref().unwrap().clone();
@@ -1046,14 +1002,16 @@ impl Gym for LunarLanderV3 {
             );
 
             #[cfg(feature = "rendering")]
-            // Create main engine particles
-            self.create_main_engine_particles(
-                world.clone(),
-                &lander_pos,
-                lander_angle,
-                &tip,
-                &dispersion,
-            );
+            if self.renderer.is_some() {
+                // Create main engine particles
+                self.create_main_engine_particles(
+                    world.clone(),
+                    &lander_pos,
+                    lander_angle,
+                    &tip,
+                    &dispersion,
+                );
+            }
         }
 
         let mut s_power = 0.0;
@@ -1089,23 +1047,25 @@ impl Gym for LunarLanderV3 {
             );
 
             #[cfg(feature = "rendering")]
-            // Create side engine particles
-            self.create_side_engine_particles(
-                world.clone(),
-                &lander_pos,
-                lander_angle,
-                &tip,
-                &side,
-                direction,
-                &dispersion,
-            );
+            if self.renderer.is_some() {
+                // Create side engine particles
+                self.create_side_engine_particles(
+                    world.clone(),
+                    &lander_pos,
+                    lander_angle,
+                    &tip,
+                    &side,
+                    direction,
+                    &dispersion,
+                );
+            }
         }
 
         // Step the world
         world.borrow_mut().step(1.0 / FPS, 6 * 30, 2 * 30);
 
         #[cfg(feature = "rendering")]
-        {
+        if self.renderer.is_some() {
             // Update and clean up particles
             let dt = 1.0 / FPS;
             self.particles.retain_mut(|particle| {
@@ -1243,6 +1203,46 @@ impl Gym for LunarLanderV3 {
 mod tests {
     use super::*;
     use crate::testing::{Testable, Tolerances, test_gym_against_python};
+
+    impl LunarLanderV3 {
+        fn get_current_state(&self) -> Result<Tensor, candle_core::Error> {
+            if let Some(lander) = &self.lander {
+                let pos = lander.borrow().get_position();
+                let vel = lander.borrow().get_linear_velocity();
+                let angle = lander.borrow().get_angle();
+                let angular_vel = lander.borrow().get_angular_velocity();
+
+                // Get leg contacts (simplified - would need proper contact detection)
+                let leg_contact_1 = self
+                    .contact_detector
+                    .as_ref()
+                    .map(|cd| cd.borrow().legs_ground_contact[0])
+                    .unwrap_or(false);
+                let leg_contact_2 = self
+                    .contact_detector
+                    .as_ref()
+                    .map(|cd| cd.borrow().legs_ground_contact[1])
+                    .unwrap_or(false);
+
+                let state = vec![
+                    (pos.x - VIEWPORT_W / SCALE / 2.0) / (VIEWPORT_W / SCALE / 2.0),
+                    (pos.y - (self.helipad_y + LEG_DOWN / SCALE)) / (VIEWPORT_H / SCALE / 2.0),
+                    vel.x * (VIEWPORT_W / SCALE / 2.0) / FPS,
+                    vel.y * (VIEWPORT_H / SCALE / 2.0) / FPS,
+                    angle,
+                    20.0 * angular_vel / FPS,
+                    if leg_contact_1 { 1.0 } else { 0.0 },
+                    if leg_contact_2 { 1.0 } else { 0.0 },
+                ];
+
+                Tensor::from_vec(state, vec![8], &self.device)
+            } else {
+                // Return zeros if no lander exists
+                let state = vec![0.0f32; 8];
+                Tensor::from_vec(state, vec![8], &self.device)
+            }
+        }
+    }
 
     impl Testable for LunarLanderV3 {
         fn reset_deterministic(&mut self) -> Result<Tensor, candle_core::Error> {
@@ -1681,6 +1681,80 @@ mod tests {
 
             if done {
                 env.reset().expect("Failed to reset environment");
+            }
+        }
+    }
+
+    #[test]
+    fn test_lunar_lander_determinism_seeded() {
+        let mut env1 = LunarLanderV3::builder().seed(42).enable_wind(true).build();
+        let mut env2 = LunarLanderV3::builder().seed(42).enable_wind(true).build();
+
+        let state1 = env1.reset_deterministic().expect("Failed to reset env1");
+        let state2 = env2.reset_deterministic().expect("Failed to reset env2");
+
+        // States should be the same size
+        assert_eq!(state1.dims(), state2.dims());
+        assert_eq!(state1.dims(), &[8]);
+
+        // The states might not be identical due to random terrain generation
+        // but they should be reasonable values
+        let state1_vec = state1
+            .to_vec1::<f32>()
+            .expect("Failed to convert state1 to vec");
+        let state2_vec = state2
+            .to_vec1::<f32>()
+            .expect("Failed to convert state2 to vec");
+
+        for (i, (&val1, &val2)) in state1_vec.iter().zip(state2_vec.iter()).enumerate() {
+            assert!(
+                val1.is_finite(),
+                "State {} should be finite, got {}",
+                i,
+                val1
+            );
+            assert!(
+                val2.is_finite(),
+                "State {} should be finite, got {}",
+                i,
+                val2
+            );
+        }
+
+        // Step both environments with the same actions and compare states
+        for step in 0..50 {
+            let action_value = step % 4; // Cycle through actions 0, 1, 2, 3
+            let action = Tensor::from_vec(vec![action_value as u32], vec![], &Device::Cpu)
+                .expect("Failed to create action tensor");
+
+            let step_info1 = env1.step(action.clone()).expect("Failed to step env1");
+            let step_info2 = env2.step(action).expect("Failed to step env2");
+
+            let state1 = step_info1.state;
+            let state2 = step_info2.state;
+
+            // States should be the same size
+            assert_eq!(state1.dims(), state2.dims());
+            assert_eq!(state1.dims(), &[8]);
+
+            let state1_vec = state1
+                .to_vec1::<f32>()
+                .expect("Failed to convert state1 to vec");
+            let state2_vec = state2
+                .to_vec1::<f32>()
+                .expect("Failed to convert state2 to vec");
+            for (i, (&val1, &val2)) in state1_vec.iter().zip(state2_vec.iter()).enumerate() {
+                assert!(
+                    (val1 - val2).abs() < 1e-5,
+                    "State {} differs between envs: {} vs {}",
+                    i,
+                    val1,
+                    val2
+                );
+            }
+            if step_info1.done || step_info2.done {
+                env1.reset().expect("Failed to reset env1");
+                env2.reset().expect("Failed to reset env2");
             }
         }
     }

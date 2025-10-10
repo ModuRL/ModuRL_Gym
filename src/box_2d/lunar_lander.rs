@@ -722,6 +722,7 @@ impl Default for LunarLanderV3 {
 
 impl Gym for LunarLanderV3 {
     type Error = candle_core::Error;
+    type SpaceError = candle_core::Error;
 
     fn reset(&mut self) -> Result<Tensor, Self::Error> {
         self.destroy();
@@ -1165,7 +1166,7 @@ impl Gym for LunarLanderV3 {
         })
     }
 
-    fn observation_space(&self) -> Box<dyn Space> {
+    fn observation_space(&self) -> Box<dyn Space<Error = Self::SpaceError>> {
         let low = vec![
             -2.5,
             -2.5,
@@ -1193,9 +1194,9 @@ impl Gym for LunarLanderV3 {
         Box::new(spaces::BoxSpace::new(low_tensor, high_tensor))
     }
 
-    fn action_space(&self) -> Box<dyn Space> {
+    fn action_space(&self) -> Box<dyn Space<Error = Self::SpaceError>> {
         // Discrete action space: 0=nop, 1=left engine, 2=main engine, 3=right engine
-        Box::new(spaces::Discrete::new(4, 0))
+        Box::new(spaces::Discrete::new(4))
     }
 }
 

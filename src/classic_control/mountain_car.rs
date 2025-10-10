@@ -44,7 +44,7 @@ impl MountainCarV0 {
         let low = Tensor::from_vec(low, vec![2], device).expect("Failed to create tensor.");
         let high = Tensor::from_vec(high, vec![2], device).expect("Failed to create tensor.");
 
-        let action_space = spaces::Discrete::new(3, 0);
+        let action_space = spaces::Discrete::new(3);
         let observation_space = spaces::BoxSpace::new(low, high);
 
         Self {
@@ -274,6 +274,7 @@ impl Default for MountainCarV0 {
 
 impl Gym for MountainCarV0 {
     type Error = candle_core::Error;
+    type SpaceError = candle_core::Error;
 
     fn reset(&mut self) -> Result<Tensor, Self::Error> {
         // Initialize position uniformly between -0.6 and -0.4
@@ -328,11 +329,11 @@ impl Gym for MountainCarV0 {
         })
     }
 
-    fn observation_space(&self) -> Box<dyn Space> {
+    fn observation_space(&self) -> Box<dyn Space<Error = Self::SpaceError>> {
         Box::new(self.observation_space.clone())
     }
 
-    fn action_space(&self) -> Box<dyn Space> {
+    fn action_space(&self) -> Box<dyn Space<Error = Self::SpaceError>> {
         Box::new(self.action_space.clone())
     }
 }
@@ -423,7 +424,7 @@ mod tests {
         env.reset().unwrap();
         let action_space = env.action_space();
         for _ in 0..200 {
-            let action = action_space.sample(&Device::Cpu);
+            let action = action_space.sample(&Device::Cpu).unwrap();
             let StepInfo {
                 state: _,
                 reward: _,

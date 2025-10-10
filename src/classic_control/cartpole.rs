@@ -65,7 +65,7 @@ impl CartPoleV1 {
         let high = Tensor::from_vec(high, vec![4], device).expect("Failed to create tensor.");
         let low = Tensor::from_vec(low, vec![4], device).expect("Failed to create tensor.");
 
-        let action_space = spaces::Discrete::new(2, 0);
+        let action_space = spaces::Discrete::new(2);
         let observation_space = spaces::BoxSpace::new(low, high);
 
         Self {
@@ -233,6 +233,7 @@ impl Default for CartPoleV1 {
 
 impl Gym for CartPoleV1 {
     type Error = candle_core::Error;
+    type SpaceError = candle_core::Error;
 
     fn reset(&mut self) -> Result<Tensor, Self::Error> {
         self.steps_beyond_terminated = None;
@@ -346,11 +347,11 @@ impl Gym for CartPoleV1 {
         }
     }
 
-    fn observation_space(&self) -> Box<dyn Space> {
+    fn observation_space(&self) -> Box<dyn Space<Error = Self::SpaceError>> {
         Box::new(self.observation_space.clone())
     }
 
-    fn action_space(&self) -> Box<dyn Space> {
+    fn action_space(&self) -> Box<dyn Space<Error = Self::SpaceError>> {
         Box::new(self.action_space.clone())
     }
 }
@@ -457,7 +458,7 @@ mod tests {
         let _state = env.reset().expect("Failed to reset environment.");
         let action_space = env.action_space();
         for _ in 0..200 {
-            let action = action_space.sample(&Device::Cpu);
+            let action = action_space.sample(&Device::Cpu).unwrap();
             let StepInfo {
                 state: _,
                 reward: _,

@@ -924,12 +924,11 @@ dependencies = [
 [[package]]
 name = "modurl"
 version = "0.1.0"
-source = "git+https://github.com/ModuRL/ModuRL#902ec0673bc695f3ba6f17e10ba8f38139d84563"
+source = "git+https://github.com/ModuRL/ModuRL?branch=implement-determinism#f23058ff76908602e78ec1d84239960df7d81f14"
 dependencies = [
  "bon",
  "candle-core",
  "candle-nn",
- "rand",
 ]
 
 [[package]]

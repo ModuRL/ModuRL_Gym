@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 candle-core = { git = "https://github.com/huggingface/candle", rev = "d205fb4" }
-modurl = { git = "https://github.com/ModuRL/ModuRL", branch = "implement-determinism" }
+modurl = { git = "https://github.com/ModuRL/ModuRL" }
 tracing = { version = "0.1.37", optional = true }
 log = { version = "0.4.28", optional = true }
 box2d-rs = "0.0.4"
@@ -26,4 +26,5 @@ tracing = ["dep:tracing"]
 logging = ["dep:log"]
 rendering = ["dep:minifb"]
 cuda = ["candle-core/cuda"]
+cudnn = ["candle-core/cudnn"]
 metal = ["candle-core/metal"]

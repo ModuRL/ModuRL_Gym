@@ -1,9 +1,13 @@
+use std::marker::PhantomData;
+
 use bon::bon;
 use candle_core::{Device, Tensor};
 use modurl::{
     gym::{Gym, StepInfo},
     spaces::{self, Space},
 };
+
+use crate::PhantonUnsendsync;
 
 /// The classic Mountain Car environment.
 /// Converted from the OpenAI Gym Mountain Car environment.
@@ -18,6 +22,7 @@ pub struct MountainCarV0 {
     goal_velocity: f32,
     force: f32,
     gravity: f32,
+    _phanton: PhantonUnsendsync,
     #[cfg(feature = "rendering")]
     renderer: Option<crate::rendering::Renderer>,
 }
@@ -65,6 +70,7 @@ impl MountainCarV0 {
             } else {
                 None
             },
+            _phanton: PhantonUnsendsync(PhantomData),
         }
     }
 

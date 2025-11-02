@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use bon::bon;
 use candle_core::{Device, Tensor};
 use modurl::{
@@ -5,6 +7,7 @@ use modurl::{
     spaces::{self, Space},
 };
 
+use crate::PhantonUnsendsync;
 #[cfg(feature = "rendering")]
 use crate::rendering::Renderer;
 
@@ -27,6 +30,7 @@ pub struct CartPoleV1 {
     state: Tensor,
     steps_since_reset: usize,
     sutton_barto_reward: bool,
+    _phantom: PhantonUnsendsync,
     #[cfg(feature = "rendering")]
     renderer: Option<Renderer>,
 }
@@ -92,6 +96,7 @@ impl CartPoleV1 {
             } else {
                 None
             },
+            _phantom: PhantonUnsendsync(PhantomData),
         }
     }
 

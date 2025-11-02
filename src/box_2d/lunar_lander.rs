@@ -22,8 +22,10 @@ use rand::Rng;
 use rand::distr::uniform::SampleRange;
 use rand::distr::uniform::SampleUniform;
 use std::cell::RefCell;
+use std::marker::PhantomData;
 use std::rc::Rc;
 
+use crate::PhantonUnsendsync;
 #[cfg(feature = "rendering")]
 use crate::rendering::Renderer;
 
@@ -271,6 +273,8 @@ pub struct LunarLanderV3 {
 
     device: Device,
 
+    _phantom: PhantonUnsendsync,
+
     #[cfg(feature = "rendering")]
     renderer: Option<Renderer>,
 }
@@ -338,6 +342,7 @@ impl LunarLanderV3 {
             rng,
             deterministic_mode: false,
             device,
+            _phantom: PhantonUnsendsync(PhantomData),
             #[cfg(feature = "rendering")]
             renderer: if render {
                 Some(Renderer::new(

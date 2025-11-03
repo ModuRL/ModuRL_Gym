@@ -1,23 +1,28 @@
-use std::{io, sync::Mutex};
+use std::io;
 
-use ale::{Ale, BundledRom};
+use ale::Ale;
 use bon::bon;
 use candle_core::Tensor;
 use modurl::{
     gym::{Gym, StepInfo},
-    spaces::Discrete,
+    spaces::{BoxSpace, Discrete},
 };
 
+pub use ale::BundledRom;
+
+#[derive(Clone, Copy)]
 pub enum AtariObsType {
     RAM,
     RGBScreen,
     GrayscaleScreen,
 }
 
-pub struct AtariGymInternal {
+pub struct AtariGym {
     ale: Ale,
     obs_type: AtariObsType,
     device: candle_core::Device,
+    observation_space: BoxSpace,
+    action_space: Discrete,
 }
 
 pub enum AtariRom {
@@ -25,53 +30,73 @@ pub enum AtariRom {
     Path(String),
 }
 
-impl AtariGymInternal {
+#[derive(Debug)]
+pub enum AtariGymError {
+    IoError(io::Error),
+    CandleError(candle_core::Error),
+}
+
+#[bon]
+impl AtariGym {
+    #[builder]
     pub fn new(
         rom: AtariRom,
         obs_type: AtariObsType,
         device: candle_core::Device,
-    ) -> Result<Self, io::Error> {
+    ) -> Result<Self, AtariGymError> {
         let mut ale = Ale::new();
         match rom {
-            AtariRom::Bundled(bundled_rom) => ale.load_rom(bundled_rom)?,
+            AtariRom::Bundled(bundled_rom) => {
+                ale.load_rom(bundled_rom).map_err(AtariGymError::IoError)?
+            }
             AtariRom::Path(path) => {
                 let c_path = std::ffi::CString::new(path).unwrap();
                 ale.load_rom_file(&c_path)
             }
         };
 
+        let observation_space = Self::get_observation_space_initial(&mut ale, obs_type, &device)
+            .map_err(AtariGymError::CandleError)?;
+        let action_space = Self::get_action_space_initial(&mut ale);
+
         Ok(Self {
             ale,
             obs_type,
             device,
+            observation_space,
+            action_space,
         })
     }
 }
 
-impl AtariGymInternal {
-    fn get_action_space(&mut self) -> Discrete {
-        Discrete::new(self.ale.legal_action_set().len() as usize)
+impl AtariGym {
+    fn get_action_space_initial(ale: &mut Ale) -> Discrete {
+        Discrete::new(ale.legal_action_set().len() as usize)
     }
 
-    fn get_observation_space(
-        &mut self,
-    ) -> Result<Box<dyn modurl::spaces::Space<Error = candle_core::Error>>, candle_core::Error>
-    {
-        Ok(match self.obs_type {
-            AtariObsType::RAM => Box::new(Discrete::new(self.ale.ram_size())),
+    fn get_observation_space_initial(
+        ale: &mut Ale,
+        obs_type: AtariObsType,
+        device: &candle_core::Device,
+    ) -> Result<BoxSpace, candle_core::Error> {
+        Ok(match obs_type {
+            AtariObsType::RAM => BoxSpace::new(
+                Tensor::full(0.0f32, &[ale.ram_size() * 8], &device)?,
+                Tensor::full(1.0f32, &[ale.ram_size() * 8], &device)?,
+            ),
             AtariObsType::RGBScreen => {
-                let (width, height) = (self.ale.screen_width(), self.ale.screen_height());
-                Box::new(modurl::spaces::BoxSpace::new(
-                    Tensor::full(0.0, &[height as usize, width as usize, 3], &self.device)?,
-                    Tensor::full(1.0, &[height as usize, width as usize, 3], &self.device)?,
-                ))
+                let (width, height) = (ale.screen_width(), ale.screen_height());
+                modurl::spaces::BoxSpace::new(
+                    Tensor::full(0.0f32, &[height as usize, width as usize, 3], &device)?,
+                    Tensor::full(1.0f32, &[height as usize, width as usize, 3], &device)?,
+                )
             }
             AtariObsType::GrayscaleScreen => {
-                let (width, height) = (self.ale.screen_width(), self.ale.screen_height());
-                Box::new(modurl::spaces::BoxSpace::new(
-                    Tensor::full(0.0, &[height as usize, width as usize, 1], &self.device)?,
-                    Tensor::full(1.0, &[height as usize, width as usize, 1], &self.device)?,
-                ))
+                let (width, height) = (ale.screen_width(), ale.screen_height());
+                modurl::spaces::BoxSpace::new(
+                    Tensor::full(0.0f32, &[height as usize, width as usize, 1], &device)?,
+                    Tensor::full(1.0f32, &[height as usize, width as usize, 1], &device)?,
+                )
             }
         })
     }
@@ -82,12 +107,12 @@ impl AtariGymInternal {
                 let mut ram_vec = vec![0u8; self.ale.ram_size()];
                 self.ale.get_ram(ram_vec.as_mut_slice());
                 // we need to split each u8 into 8 bits
-                let ram_bits: Vec<u8> = ram_vec
+                let ram_bits: Vec<f32> = ram_vec
                     .iter()
                     .flat_map(|byte| {
                         (0..8)
                             .rev()
-                            .map(move |i| if (byte >> i) & 1 == 1 { 1u8 } else { 0u8 })
+                            .map(move |i| if (byte >> i) & 1 == 1 { 1.0f32 } else { 0.0f32 })
                     })
                     .collect();
                 Tensor::from_slice(&ram_bits, &[ram_bits.len()], &self.device)
@@ -135,24 +160,13 @@ impl AtariGymInternal {
             truncated,
         })
     }
-}
 
-struct AtariGym {
-    inner: Mutex<AtariGymInternal>,
-}
+    fn get_action_space(&self) -> &Discrete {
+        &self.action_space
+    }
 
-#[bon]
-impl AtariGym {
-    #[builder]
-    pub fn new(
-        rom: AtariRom,
-        obs_type: AtariObsType,
-        device: candle_core::Device,
-    ) -> Result<Self, io::Error> {
-        let inner = AtariGymInternal::new(rom, obs_type, device)?;
-        Ok(Self {
-            inner: Mutex::new(inner),
-        })
+    fn get_observation_space(&self) -> &BoxSpace {
+        &self.observation_space
     }
 }
 
@@ -161,25 +175,21 @@ impl Gym for AtariGym {
     type SpaceError = candle_core::Error;
 
     fn reset(&mut self) -> Result<Tensor, Self::Error> {
-        let inner = &mut *self.inner.lock().unwrap();
-        inner.ale.reset_game();
-        inner.get_state()
+        self.ale.reset_game();
+        self.get_state()
     }
 
     fn action_space(&self) -> Box<dyn modurl::spaces::Space<Error = Self::SpaceError>> {
-        let inner = &mut *self.inner.lock().unwrap();
-        Box::new(inner.get_action_space())
+        Box::new(self.get_action_space().clone())
     }
 
     fn observation_space(&self) -> Box<dyn modurl::spaces::Space<Error = Self::SpaceError>> {
-        let inner = &mut *self.inner.lock().unwrap();
-        inner.get_observation_space().unwrap()
+        Box::new(self.get_observation_space().clone())
     }
 
     fn step(&mut self, action: Tensor) -> Result<StepInfo, Self::Error> {
         let action = action.to_scalar::<u32>()? as usize;
-        let inner = &mut *self.inner.lock().unwrap();
-        inner.step_usize(action)
+        self.step_usize(action)
     }
 }
 
@@ -193,8 +203,8 @@ mod tests {
     fn test_atari_gym() {
         let device = Device::Cpu;
         let mut gym = AtariGym::builder()
-            .rom(AtariRom::Bundled(BundledRom::Pong))
-            .obs_type(AtariObsType::RGBScreen)
+            .rom(AtariRom::Bundled(BundledRom::RiverRaid))
+            .obs_type(AtariObsType::RAM)
             .device(device.clone())
             .build()
             .unwrap();
@@ -211,6 +221,13 @@ mod tests {
                 "Step info - Reward: {}, Done: {}",
                 step_info.reward, step_info.done
             );
+            let observation_space = gym.observation_space();
+            println!(
+                "Observation shape: {:?} vs expected: {:?}",
+                step_info.state.shape(),
+                observation_space.shape()
+            );
+            assert!(gym.observation_space().contains(&step_info.state));
             if step_info.done {
                 break;
             }

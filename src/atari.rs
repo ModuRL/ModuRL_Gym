@@ -23,6 +23,7 @@ pub struct AtariGym {
     device: candle_core::Device,
     observation_space: BoxSpace,
     action_space: Discrete,
+    frame_skip: usize,
 }
 
 pub enum AtariRom {
@@ -65,11 +66,16 @@ impl AtariGym {
             device,
             observation_space,
             action_space,
+            frame_skip: 4,
         })
     }
 }
 
 impl AtariGym {
+    pub fn set_frame_skip(&mut self, frame_skip: usize) {
+        self.frame_skip = frame_skip;
+    }
+
     fn get_action_space_initial(ale: &mut Ale) -> Discrete {
         Discrete::new(ale.legal_action_set().len() as usize)
     }
@@ -81,8 +87,8 @@ impl AtariGym {
     ) -> Result<BoxSpace, candle_core::Error> {
         Ok(match obs_type {
             AtariObsType::RAM => BoxSpace::new(
-                Tensor::full(0.0f32, &[ale.ram_size() * 8], &device)?,
-                Tensor::full(1.0f32, &[ale.ram_size() * 8], &device)?,
+                Tensor::full(0.0f32, &[ale.ram_size()], &device)?,
+                Tensor::full(1.0f32, &[ale.ram_size()], &device)?,
             ),
             AtariObsType::RGBScreen => {
                 let (width, height) = (ale.screen_width(), ale.screen_height());
@@ -106,16 +112,9 @@ impl AtariGym {
             AtariObsType::RAM => {
                 let mut ram_vec = vec![0u8; self.ale.ram_size()];
                 self.ale.get_ram(ram_vec.as_mut_slice());
-                // we need to split each u8 into 8 bits
-                let ram_bits: Vec<f32> = ram_vec
-                    .iter()
-                    .flat_map(|byte| {
-                        (0..8)
-                            .rev()
-                            .map(move |i| if (byte >> i) & 1 == 1 { 1.0f32 } else { 0.0f32 })
-                    })
-                    .collect();
-                Tensor::from_slice(&ram_bits, &[ram_bits.len()], &self.device)
+                // normalize to 0..1
+                let ram_bytes: Vec<f32> = ram_vec.iter().map(|&x| x as f32 / 255.0).collect();
+                Tensor::from_slice(&ram_bytes, &[ram_bytes.len()], &self.device)
             }
             AtariObsType::RGBScreen => {
                 let mut screen_vec =
@@ -141,14 +140,21 @@ impl AtariGym {
     fn step_usize(&mut self, action: usize) -> Result<StepInfo, candle_core::Error> {
         let StepInfo {
             state,
-            reward,
+            mut reward,
             done,
             truncated,
         };
 
         assert!(action < self.get_action_space().get_possible_values());
         let mapped_action = self.ale.legal_action_set()[action];
-        reward = self.ale.act(mapped_action) as f32;
+
+        reward = 0.0f32;
+        for _ in 0..self.frame_skip {
+            reward += self.ale.act(mapped_action) as f32;
+            if self.ale.is_game_over() {
+                break;
+            }
+        }
         done = self.ale.is_game_over();
         state = self.get_state()?;
         truncated = false;

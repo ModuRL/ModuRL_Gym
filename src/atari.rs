@@ -24,6 +24,7 @@ pub struct AtariGym {
     observation_space: BoxSpace,
     action_space: Discrete,
     frame_skip: usize,
+    lives: u32,
 }
 
 pub enum AtariRom {
@@ -61,6 +62,7 @@ impl AtariGym {
         let action_space = Self::get_action_space_initial(&mut ale);
 
         Ok(Self {
+            lives: ale.lives() as u32,
             ale,
             obs_type,
             device,
@@ -73,6 +75,7 @@ impl AtariGym {
 
 impl AtariGym {
     pub fn set_frame_skip(&mut self, frame_skip: usize) {
+        assert!(frame_skip >= 1, "frame_skip must be at least 1");
         self.frame_skip = frame_skip;
     }
 
@@ -139,7 +142,7 @@ impl AtariGym {
 
     fn step_usize(&mut self, action: usize) -> Result<StepInfo, candle_core::Error> {
         let StepInfo {
-            state,
+            state: _,
             mut reward,
             done,
             truncated,
@@ -148,19 +151,38 @@ impl AtariGym {
         assert!(action < self.get_action_space().get_possible_values());
         let mapped_action = self.ale.legal_action_set()[action];
 
+        let mut state = None;
         reward = 0.0f32;
-        for _ in 0..self.frame_skip {
+        for i in 0..self.frame_skip {
             reward += self.ale.act(mapped_action) as f32;
+
+            // if this is one of the last 2 frames, get the state
+            if i as i32 >= (self.frame_skip as i32) - 2 {
+                match state {
+                    None => {
+                        state = Some(self.get_state()?);
+                    }
+                    Some(ref mut s) => {
+                        let new_state = self.get_state()?;
+                        *s = Tensor::maximum(s, &new_state)?;
+                    }
+                }
+            }
+
             if self.ale.is_game_over() {
                 break;
             }
         }
         done = self.ale.is_game_over();
-        state = self.get_state()?;
         truncated = false;
+        self.lives = self.ale.lives() as u32;
+
+        if state.is_none() {
+            state = Some(self.get_state()?);
+        }
 
         Ok(StepInfo {
-            state,
+            state: state.unwrap(),
             reward,
             done,
             truncated,
@@ -173,6 +195,10 @@ impl AtariGym {
 
     fn get_observation_space(&self) -> &BoxSpace {
         &self.observation_space
+    }
+
+    pub fn get_lives(&self) -> u32 {
+        self.lives
     }
 }
 

@@ -8,7 +8,7 @@ pub mod classic_control;
 pub(crate) mod testing;
 
 #[cfg(feature = "rendering")]
-pub(crate) mod rendering;
+pub mod rendering;
 
 // Rendering components are not Send or Sync
 // So we use this to make sure that even without rendering enabled the types are still not Send or Sync

@@ -23,6 +23,10 @@ impl Renderer {
         self.buffer.fill(color);
     }
 
+    pub fn set_buffer(&mut self, buffer: &[u32]) {
+        self.buffer.copy_from_slice(buffer);
+    }
+
     pub fn rect(&mut self, x: usize, y: usize, rw: usize, rh: usize, color: u32) {
         let x_end = (x + rw).min(self.w);
         let y_end = (y + rh).min(self.h);

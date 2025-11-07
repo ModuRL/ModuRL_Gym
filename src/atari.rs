@@ -1,7 +1,7 @@
 use std::io;
 
 use ale::Ale;
-use bon::bon;
+use bon::{bon, builder};
 use candle_core::Tensor;
 use modurl::{
     gym::{Gym, StepInfo},
@@ -25,6 +25,8 @@ pub struct AtariGym {
     action_space: Discrete,
     frame_skip: usize,
     lives: u32,
+    #[cfg(feature = "rendering")]
+    renderer: Option<crate::rendering::Renderer>,
 }
 
 pub enum AtariRom {
@@ -45,6 +47,9 @@ impl AtariGym {
         rom: AtariRom,
         obs_type: AtariObsType,
         device: candle_core::Device,
+        #[cfg(feature = "rendering")]
+        #[builder(default = false)]
+        render: bool,
     ) -> Result<Self, AtariGymError> {
         let mut ale = Ale::new();
         match rom {
@@ -63,6 +68,16 @@ impl AtariGym {
 
         Ok(Self {
             lives: ale.lives() as u32,
+            #[cfg(feature = "rendering")]
+            renderer: if render {
+                Some(crate::rendering::Renderer::new(
+                    ale.screen_width(),
+                    ale.screen_height(),
+                    "Atari Gym Renderer",
+                ))
+            } else {
+                None
+            },
             ale,
             obs_type,
             device,
@@ -181,12 +196,33 @@ impl AtariGym {
             state = Some(self.get_state()?);
         }
 
+        #[cfg(feature = "rendering")]
+        self.render();
+
         Ok(StepInfo {
             state: state.unwrap(),
             reward,
             done,
             truncated,
         })
+    }
+
+    #[cfg(feature = "rendering")]
+    fn render(&mut self) {
+        if let Some(renderer) = &mut self.renderer {
+            let mut screen_vec =
+                vec![0u8; (self.ale.screen_width() * self.ale.screen_height() * 3) as usize];
+            self.ale.get_screen_rgb(screen_vec.as_mut_slice());
+            renderer.set_buffer(
+                &screen_vec
+                    .chunks(3)
+                    .map(|chunk| {
+                        ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8) | (chunk[2] as u32)
+                    })
+                    .collect::<Vec<u32>>(),
+            );
+            renderer.present();
+        }
     }
 
     fn get_action_space(&self) -> &Discrete {

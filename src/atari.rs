@@ -95,7 +95,7 @@ impl AtariGym {
     }
 
     fn get_action_space_initial(ale: &mut Ale) -> Discrete {
-        Discrete::new(ale.legal_action_set().len() as usize)
+        Discrete::new(ale.minimal_action_set().len() as usize)
     }
 
     fn get_observation_space_initial(
@@ -164,7 +164,7 @@ impl AtariGym {
         };
 
         assert!(action < self.get_action_space().get_possible_values());
-        let mapped_action = self.ale.legal_action_set()[action];
+        let mapped_action = self.ale.minimal_action_set()[action];
 
         let mut state = None;
         reward = 0.0f32;

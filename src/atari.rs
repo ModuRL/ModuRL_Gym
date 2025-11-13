@@ -27,6 +27,10 @@ pub struct AtariGym {
     lives: u32,
     #[cfg(feature = "rendering")]
     renderer: Option<crate::rendering::Renderer>,
+    #[cfg(feature = "rendering")]
+    render_every: usize,
+    #[cfg(feature = "rendering")]
+    timesteps: usize,
 }
 
 pub enum AtariRom {
@@ -50,6 +54,9 @@ impl AtariGym {
         #[cfg(feature = "rendering")]
         #[builder(default = false)]
         render: bool,
+        #[cfg(feature = "rendering")]
+        #[builder(default = 4)]
+        render_every: usize,
     ) -> Result<Self, AtariGymError> {
         let mut ale = Ale::new();
         match rom {
@@ -84,6 +91,10 @@ impl AtariGym {
             observation_space,
             action_space,
             frame_skip: 4,
+            #[cfg(feature = "rendering")]
+            render_every,
+            #[cfg(feature = "rendering")]
+            timesteps: 0,
         })
     }
 }
@@ -95,6 +106,7 @@ impl AtariGym {
     }
 
     fn get_action_space_initial(ale: &mut Ale) -> Discrete {
+        println!("Action set: {:?}", ale.minimal_action_set());
         Discrete::new(ale.minimal_action_set().len() as usize)
     }
 
@@ -197,7 +209,15 @@ impl AtariGym {
         }
 
         #[cfg(feature = "rendering")]
-        self.render();
+        {
+            self.timesteps += 1;
+        }
+
+        #[cfg(feature = "rendering")]
+        if self.timesteps % self.render_every == 0 {
+            self.render();
+            self.timesteps = 0;
+        }
 
         Ok(StepInfo {
             state: state.unwrap(),

@@ -11,7 +11,9 @@ use box2d_rs::joints::b2_revolute_joint::*;
 
 use box2d_rs::shapes::b2_edge_shape::*;
 use box2d_rs::shapes::b2_polygon_shape::*;
+use candle_core::DType;
 
+use crate::rendering::Renderer;
 use bon::bon;
 use candle_core::{Device, Tensor};
 use modurl::{
@@ -22,12 +24,7 @@ use rand::Rng;
 use rand::distr::uniform::SampleRange;
 use rand::distr::uniform::SampleUniform;
 use std::cell::RefCell;
-use std::marker::PhantomData;
 use std::rc::Rc;
-
-use crate::PhantonUnsendsync;
-#[cfg(feature = "rendering")]
-use crate::rendering::Renderer;
 
 // Constants from Python code
 const FPS: f32 = 50.0;
@@ -36,7 +33,7 @@ const SCALE: f32 = 30.0; // affects how fast-paced the game is, forces should be
 const MAIN_ENGINE_POWER: f32 = 13.0;
 const SIDE_ENGINE_POWER: f32 = 0.6;
 
-const INITIAL_RANDOM: f32 = 1000.0; // Set 1500 to make game harder
+const INITIAL_RANDOM: f32 = 1000.0;
 
 const LANDER_POLY: [(f32, f32); 6] = [
     (-14.0, 17.0),
@@ -54,12 +51,24 @@ const LEG_SPRING_TORQUE: f32 = 40.0;
 
 const SIDE_ENGINE_HEIGHT: f32 = 14.0;
 const SIDE_ENGINE_AWAY: f32 = 12.0;
-const MAIN_ENGINE_Y_LOCATION: f32 = 4.0; // The Y location of the main engine on the body of the Lander.
+const MAIN_ENGINE_Y_LOCATION: f32 = 4.0;
 
 const VIEWPORT_W: f32 = 600.0;
 const VIEWPORT_H: f32 = 400.0;
 
-enum EnvRng {
+#[derive(PartialEq, Debug)]
+pub enum LunarLanderObsMode {
+    Default,
+    RGBArray,
+}
+
+impl Default for LunarLanderObsMode {
+    fn default() -> Self {
+        LunarLanderObsMode::Default
+    }
+}
+
+pub enum EnvRng {
     Thread(rand::rngs::ThreadRng),
     Seeded(rand::rngs::StdRng),
 }
@@ -90,15 +99,10 @@ impl EnvRng {
 }
 
 // Rendering colors (ARGB format)
-#[cfg(feature = "rendering")]
 const COLOR_TERRAIN: u32 = 0xFFFFFFFF; // White
-#[cfg(feature = "rendering")]
 const COLOR_BACKGROUND: u32 = 0xFF000000; // Black
-#[cfg(feature = "rendering")]
 const COLOR_LANDING_PAD: u32 = 0xFFCCCC00; // Yellow/gold landing pad (204, 204, 0)
-#[cfg(feature = "rendering")]
 const COLOR_LANDER_BODY: u32 = 0xFF8066E6; // Purple main body (128, 102, 230)
-#[cfg(feature = "rendering")]
 const COLOR_LANDER_LEGS: u32 = 0xFF8066E6; // Purple legs (128, 102, 230)
 
 #[derive(Default, Copy, Clone, Debug, PartialEq)]
@@ -110,7 +114,6 @@ impl UserDataType for UserDataTypes {
 }
 
 // Particle struct for engine flames with time-to-live
-#[cfg(feature = "rendering")]
 #[derive(Clone)]
 struct Particle {
     body: BodyPtr<UserDataTypes>,
@@ -118,7 +121,6 @@ struct Particle {
     initial_ttl: f32,
 }
 
-#[cfg(feature = "rendering")]
 impl Particle {
     fn new(body: BodyPtr<UserDataTypes>, ttl: f32) -> Self {
         Self {
@@ -244,7 +246,6 @@ pub struct LunarLanderV3 {
     lander: Option<BodyPtr<UserDataTypes>>,
     legs: Vec<BodyPtr<UserDataTypes>>,
     leg_joints: Vec<B2jointPtr<UserDataTypes>>,
-    #[cfg(feature = "rendering")]
     particles: Vec<Particle>,
 
     // Contact detection
@@ -273,9 +274,8 @@ pub struct LunarLanderV3 {
 
     device: Device,
 
-    _phantom: PhantonUnsendsync,
+    obs_mode: LunarLanderObsMode,
 
-    #[cfg(feature = "rendering")]
     renderer: Option<Renderer>,
 }
 
@@ -288,10 +288,11 @@ impl LunarLanderV3 {
         #[builder(default = 15.0)] wind_power: f32,
         #[builder(default = 1.5)] turbulence_power: f32,
         #[builder(default = Device::Cpu)] device: Device,
+        #[builder(default = LunarLanderObsMode::Default)] obs_mode: LunarLanderObsMode,
+        seed: Option<u64>,
         #[cfg(feature = "rendering")]
         #[builder(default = false)]
-        render: bool,
-        seed: Option<u64>,
+        render_human: bool,
     ) -> Self {
         assert!(
             -12.0 < gravity && gravity < 0.0,
@@ -318,6 +319,24 @@ impl LunarLanderV3 {
             rng = EnvRng::from_seed(s);
         }
 
+        #[cfg(feature = "rendering")]
+        let has_renderer = obs_mode == LunarLanderObsMode::RGBArray || render_human;
+        #[cfg(not(feature = "rendering"))]
+        let has_renderer = obs_mode == LunarLanderObsMode::RGBArray;
+
+        let renderer = if has_renderer {
+            Some(Renderer::new(
+                VIEWPORT_W as usize,
+                VIEWPORT_H as usize,
+                #[cfg(feature = "rendering")]
+                "Lunar Lander",
+                #[cfg(feature = "rendering")]
+                render_human,
+            ))
+        } else {
+            None
+        };
+
         Self {
             gravity,
             enable_wind,
@@ -328,7 +347,6 @@ impl LunarLanderV3 {
             lander: None,
             legs: Vec::new(),
             leg_joints: Vec::new(),
-            #[cfg(feature = "rendering")]
             particles: Vec::new(),
             contact_detector: None,
             game_over: false,
@@ -342,23 +360,13 @@ impl LunarLanderV3 {
             rng,
             deterministic_mode: false,
             device,
-            _phantom: PhantonUnsendsync(PhantomData),
-            #[cfg(feature = "rendering")]
-            renderer: if render {
-                Some(Renderer::new(
-                    VIEWPORT_W as usize,
-                    VIEWPORT_H as usize,
-                    "Lunar Lander",
-                ))
-            } else {
-                None
-            },
+            renderer,
+            obs_mode,
         }
     }
 
     fn destroy(&mut self) {
         if let Some(world) = self.world.take() {
-            #[cfg(feature = "rendering")]
             if self.renderer.is_some() {
                 // Clean up particles
                 for particle in &self.particles {
@@ -387,7 +395,6 @@ impl LunarLanderV3 {
         }
     }
 
-    #[cfg(feature = "rendering")]
     fn render(&mut self) {
         if let Some(renderer) = &mut self.renderer
             && renderer.is_open()
@@ -416,7 +423,6 @@ impl LunarLanderV3 {
         }
     }
 
-    #[cfg(feature = "rendering")]
     fn render_terrain_static(
         renderer: &mut crate::rendering::Renderer,
         sky_polys: &[Vec<(f32, f32)>],
@@ -435,7 +441,6 @@ impl LunarLanderV3 {
         }
     }
 
-    #[cfg(feature = "rendering")]
     fn render_landing_pad_static(
         renderer: &mut crate::rendering::Renderer,
         helipad_x1: f32,
@@ -483,7 +488,6 @@ impl LunarLanderV3 {
         );
     }
 
-    #[cfg(feature = "rendering")]
     fn render_lander_static(
         renderer: &mut crate::rendering::Renderer,
         lander: Option<&BodyPtr<UserDataTypes>>,
@@ -528,7 +532,6 @@ impl LunarLanderV3 {
         }
     }
 
-    #[cfg(feature = "rendering")]
     fn render_legs_static(
         renderer: &mut crate::rendering::Renderer,
         legs: &[BodyPtr<UserDataTypes>],
@@ -570,7 +573,6 @@ impl LunarLanderV3 {
         }
     }
 
-    #[cfg(feature = "rendering")]
     fn render_particles_static(renderer: &mut crate::rendering::Renderer, particles: &[Particle]) {
         // Draw engine particles as small rectangles with fade effect
         for particle in particles {
@@ -606,7 +608,6 @@ impl LunarLanderV3 {
         }
     }
 
-    #[cfg(feature = "rendering")]
     // Particle creation methods
     fn create_main_engine_particles(
         &mut self,
@@ -660,7 +661,6 @@ impl LunarLanderV3 {
         self.particles.push(Particle::new(particle, 0.5)); // 0.5 second lifetime for main engine particles (faster fade like original)
     }
 
-    #[cfg(feature = "rendering")]
     fn create_side_engine_particles(
         &mut self,
         world: B2worldPtr<UserDataTypes>,
@@ -716,6 +716,68 @@ impl LunarLanderV3 {
 
             self.particles.push(Particle::new(particle, 0.4)); // 0.4 second lifetime for side engine particles
         }
+    }
+
+    fn get_rgb_array(&mut self) -> Result<Tensor, candle_core::Error> {
+        if let Some(renderer) = &mut self.renderer {
+            let width = VIEWPORT_W as usize;
+            let height = VIEWPORT_H as usize;
+            let pixel_data = renderer.get_buffer();
+            // Convert pixel data (ARGB) to RGB format
+            let mut rgb_data = Vec::with_capacity(width * height * 3);
+            for pixel in pixel_data {
+                let r = ((pixel >> 16) & 0xFF) as u8;
+                let g = ((pixel >> 8) & 0xFF) as u8;
+                let b = (pixel & 0xFF) as u8;
+                rgb_data.push(r);
+                rgb_data.push(g);
+                rgb_data.push(b);
+            }
+            Tensor::from_vec(rgb_data, &[height, width, 3], &self.device.clone())
+        } else {
+            unreachable!("Renderer not initialized for RGB array observation");
+        }
+    }
+
+    fn default_observation_space(
+        &self,
+    ) -> Box<dyn Space<Error = <LunarLanderV3 as Gym>::SpaceError>> {
+        let low = vec![
+            -2.5,
+            -2.5,
+            -10.0,
+            -10.0,
+            -2.0 * std::f32::consts::PI,
+            -10.0,
+            0.0,
+            0.0,
+        ];
+        let high = vec![
+            2.5,
+            2.5,
+            10.0,
+            10.0,
+            2.0 * std::f32::consts::PI,
+            10.0,
+            1.0,
+            1.0,
+        ];
+        let low_tensor =
+            Tensor::from_vec(low, vec![8], &self.device).expect("Failed to create low tensor");
+        let high_tensor =
+            Tensor::from_vec(high, vec![8], &self.device).expect("Failed to create high tensor");
+        Box::new(spaces::BoxSpace::new(low_tensor, high_tensor))
+    }
+
+    fn rgb_array_observation_space(
+        &self,
+    ) -> Box<dyn Space<Error = <LunarLanderV3 as Gym>::SpaceError>> {
+        let shape = vec![VIEWPORT_H as usize, VIEWPORT_W as usize, 3];
+        let low_tensor = Tensor::zeros(shape.clone(), DType::F32, &self.device)
+            .expect("Failed to create low tensor");
+        let high_tensor =
+            Tensor::full(255.0, shape, &self.device).expect("Failed to create high tensor");
+        Box::new(spaces::BoxSpace::new(low_tensor, high_tensor))
     }
 }
 
@@ -915,7 +977,6 @@ impl Gym for LunarLanderV3 {
         // Step once to ensure proper initialization
         let step_info = self.step(Tensor::from_vec(vec![0u32], vec![], &self.device)?)?;
 
-        #[cfg(feature = "rendering")]
         self.render();
 
         Ok(step_info.state)
@@ -1007,7 +1068,6 @@ impl Gym for LunarLanderV3 {
                 true,
             );
 
-            #[cfg(feature = "rendering")]
             if self.renderer.is_some() {
                 // Create main engine particles
                 self.create_main_engine_particles(
@@ -1052,7 +1112,6 @@ impl Gym for LunarLanderV3 {
                 true,
             );
 
-            #[cfg(feature = "rendering")]
             if self.renderer.is_some() {
                 // Create side engine particles
                 self.create_side_engine_particles(
@@ -1070,7 +1129,6 @@ impl Gym for LunarLanderV3 {
         // Step the world
         world.borrow_mut().step(1.0 / FPS, 6 * 30, 2 * 30);
 
-        #[cfg(feature = "rendering")]
         if self.renderer.is_some() {
             // Update and clean up particles
             let dt = 1.0 / FPS;
@@ -1160,11 +1218,15 @@ impl Gym for LunarLanderV3 {
             reward = 100.0;
         }
 
-        #[cfg(feature = "rendering")]
         self.render();
 
+        let obs = match self.obs_mode {
+            LunarLanderObsMode::Default => state_tensor.clone(),
+            LunarLanderObsMode::RGBArray => self.get_rgb_array()?,
+        };
+
         Ok(StepInfo {
-            state: state_tensor,
+            state: obs,
             reward,
             done: terminated,
             truncated: false,
@@ -1172,31 +1234,10 @@ impl Gym for LunarLanderV3 {
     }
 
     fn observation_space(&self) -> Box<dyn Space<Error = Self::SpaceError>> {
-        let low = vec![
-            -2.5,
-            -2.5,
-            -10.0,
-            -10.0,
-            -2.0 * std::f32::consts::PI,
-            -10.0,
-            0.0,
-            0.0,
-        ];
-        let high = vec![
-            2.5,
-            2.5,
-            10.0,
-            10.0,
-            2.0 * std::f32::consts::PI,
-            10.0,
-            1.0,
-            1.0,
-        ];
-        let low_tensor =
-            Tensor::from_vec(low, vec![8], &self.device).expect("Failed to create low tensor");
-        let high_tensor =
-            Tensor::from_vec(high, vec![8], &self.device).expect("Failed to create high tensor");
-        Box::new(spaces::BoxSpace::new(low_tensor, high_tensor))
+        match self.obs_mode {
+            LunarLanderObsMode::Default => self.default_observation_space(),
+            LunarLanderObsMode::RGBArray => self.rgb_array_observation_space(),
+        }
     }
 
     fn action_space(&self) -> Box<dyn Space<Error = Self::SpaceError>> {
@@ -1662,7 +1703,7 @@ mod tests {
     #[cfg(feature = "rendering")]
     #[test]
     fn test_lunar_lander_rendering() {
-        let mut env = LunarLanderV3::builder().render(true).build();
+        let mut env = LunarLanderV3::builder().render_human(true).build();
         env.reset().expect("Failed to reset environment");
 
         // Step a few times and render, cycling through different actions to test particle rendering
@@ -1763,5 +1804,25 @@ mod tests {
                 env2.reset().expect("Failed to reset env2");
             }
         }
+    }
+
+    #[test]
+    fn test_lunar_lander_spaces() {
+        let env = LunarLanderV3::default();
+        let action_space = env.action_space();
+        assert_eq!(action_space.shape(), vec![4]);
+
+        let env = LunarLanderV3::builder()
+            .obs_mode(LunarLanderObsMode::RGBArray)
+            .build();
+        let obs_space = env.observation_space();
+        assert_eq!(
+            obs_space.shape(),
+            vec![VIEWPORT_H as usize, VIEWPORT_W as usize, 3]
+        );
+
+        let env = LunarLanderV3::default();
+        let obs_space = env.observation_space();
+        assert_eq!(obs_space.shape(), vec![8]);
     }
 }

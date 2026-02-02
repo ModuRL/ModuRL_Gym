@@ -1,7 +1,7 @@
 use std::io;
 
 use ale::Ale;
-use bon::{bon, builder};
+use bon::bon;
 use candle_core::Tensor;
 use modurl::{
     gym::{Gym, StepInfo},
@@ -81,6 +81,7 @@ impl AtariGym {
                     ale.screen_width(),
                     ale.screen_height(),
                     "Atari Gym Renderer",
+                    true,
                 ))
             } else {
                 None
@@ -130,8 +131,8 @@ impl AtariGym {
             AtariObsType::GrayscaleScreen => {
                 let (width, height) = (ale.screen_width(), ale.screen_height());
                 modurl::spaces::BoxSpace::new(
-                    Tensor::full(0.0f32, &[height as usize, width as usize, 1], &device)?,
-                    Tensor::full(1.0f32, &[height as usize, width as usize, 1], &device)?,
+                    Tensor::full(0.0f32, &[height as usize, width as usize], &device)?,
+                    Tensor::full(1.0f32, &[height as usize, width as usize], &device)?,
                 )
             }
         })
@@ -216,7 +217,6 @@ impl AtariGym {
         #[cfg(feature = "rendering")]
         if self.timesteps % self.render_every == 0 {
             self.render();
-            self.timesteps = 0;
         }
 
         Ok(StepInfo {

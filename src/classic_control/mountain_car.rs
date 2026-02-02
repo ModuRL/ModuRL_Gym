@@ -1,5 +1,4 @@
-use std::marker::PhantomData;
-
+use crate::rendering::Renderer;
 use bon::bon;
 use candle_core::{Device, Tensor};
 use modurl::{
@@ -7,7 +6,17 @@ use modurl::{
     spaces::{self, Space},
 };
 
-use crate::PhantonUnsendsync;
+#[derive(PartialEq, Debug)]
+pub enum MountainCarObsMode {
+    Default,
+    RGBArray,
+}
+
+impl Default for MountainCarObsMode {
+    fn default() -> Self {
+        MountainCarObsMode::Default
+    }
+}
 
 /// The classic Mountain Car environment.
 /// Converted from the OpenAI Gym Mountain Car environment.
@@ -22,9 +31,8 @@ pub struct MountainCarV0 {
     goal_velocity: f32,
     force: f32,
     gravity: f32,
-    _phanton: PhantonUnsendsync,
-    #[cfg(feature = "rendering")]
-    renderer: Option<crate::rendering::Renderer>,
+    renderer: Option<Renderer>,
+    obs_mode: MountainCarObsMode,
 }
 
 #[bon]
@@ -34,7 +42,8 @@ impl MountainCarV0 {
         #[builder(default = &Device::Cpu)] device: &Device,
         #[cfg(feature = "rendering")]
         #[builder(default = false)]
-        render: bool,
+        render_human: bool,
+        #[builder(default = MountainCarObsMode::Default)] obs_mode: MountainCarObsMode,
         #[builder(default = 0.0)] goal_velocity: f32,
     ) -> Self {
         let min_position = -1.2;
@@ -52,6 +61,24 @@ impl MountainCarV0 {
         let action_space = spaces::Discrete::new(3);
         let observation_space = spaces::BoxSpace::new(low, high);
 
+        #[cfg(not(feature = "rendering"))]
+        let has_renderer = obs_mode == MountainCarObsMode::RGBArray;
+        #[cfg(feature = "rendering")]
+        let has_renderer = obs_mode == MountainCarObsMode::RGBArray || render_human;
+
+        let renderer = if has_renderer {
+            Some(Renderer::new(
+                600,
+                400,
+                #[cfg(feature = "rendering")]
+                "Mountain Car",
+                #[cfg(feature = "rendering")]
+                render_human,
+            ))
+        } else {
+            None
+        };
+
         Self {
             state: Tensor::zeros(vec![2], candle_core::DType::F32, device)
                 .expect("Failed to create tensor."),
@@ -64,17 +91,11 @@ impl MountainCarV0 {
             goal_velocity,
             force,
             gravity,
-            #[cfg(feature = "rendering")]
-            renderer: if render {
-                Some(crate::rendering::Renderer::new(600, 400, "Mountain Car"))
-            } else {
-                None
-            },
-            _phanton: PhantonUnsendsync(PhantomData),
+            renderer,
+            obs_mode,
         }
     }
 
-    #[cfg(feature = "rendering")]
     fn render(&mut self) {
         if let Some(renderer) = &mut self.renderer {
             let screen_width = renderer.get_width() as f32;
@@ -120,12 +141,10 @@ impl MountainCarV0 {
         }
     }
 
-    #[cfg(feature = "rendering")]
     fn height(x: f32) -> f32 {
         (3.0 * x).sin() * 0.45 + 0.55
     }
 
-    #[cfg(feature = "rendering")]
     fn draw_mountain_contour(
         renderer: &mut crate::rendering::Renderer,
         scale: f32,
@@ -169,7 +188,6 @@ impl MountainCarV0 {
         }
     }
 
-    #[cfg(feature = "rendering")]
     fn draw_car(
         renderer: &mut crate::rendering::Renderer,
         pos: f32,
@@ -249,7 +267,6 @@ impl MountainCarV0 {
         }
     }
 
-    #[cfg(feature = "rendering")]
     fn draw_goal_flag(
         renderer: &mut crate::rendering::Renderer,
         scale: f32,
@@ -269,6 +286,31 @@ impl MountainCarV0 {
             0x000000, // black pole
             0xCCCC00, // yellow flag
         );
+    }
+
+    fn get_rgb_array(&self) -> Result<Tensor, candle_core::Error> {
+        if let Some(renderer) = &self.renderer {
+            let buffer = renderer.get_buffer();
+            let width = renderer.get_width();
+            let height = renderer.get_height();
+
+            // Create a tensor from the buffer
+            let mut data = Vec::with_capacity(width * height * 3);
+            for &pixel in buffer.iter() {
+                let r = ((pixel >> 16) & 0xFF) as u8;
+                let g = ((pixel >> 8) & 0xFF) as u8;
+                let b = (pixel & 0xFF) as u8;
+                data.push(r);
+                data.push(g);
+                data.push(b);
+            }
+
+            let tensor = Tensor::from_vec(data, vec![height, width, 3], self.state.device())?;
+
+            Ok(tensor)
+        } else {
+            unreachable!("Renderer is not initialized.");
+        }
     }
 }
 
@@ -290,7 +332,6 @@ impl Gym for MountainCarV0 {
 
         self.state = Tensor::cat(&[position, velocity], 0)?;
 
-        #[cfg(feature = "rendering")]
         self.render();
 
         Ok(self.state.clone())
@@ -324,11 +365,15 @@ impl Gym for MountainCarV0 {
         let terminated = position >= self.goal_position && velocity >= self.goal_velocity;
         let reward = -1.0;
 
-        #[cfg(feature = "rendering")]
         self.render();
 
+        let obs = match self.obs_mode {
+            MountainCarObsMode::Default => self.state.clone(),
+            MountainCarObsMode::RGBArray => self.get_rgb_array()?,
+        };
+
         Ok(StepInfo {
-            state: self.state.clone(),
+            state: obs,
             reward,
             done: terminated,
             truncated: false,
@@ -426,7 +471,7 @@ mod tests {
     #[cfg(feature = "rendering")]
     #[test]
     fn test_mountain_car_rendering() {
-        let mut env = MountainCarV0::builder().render(true).build();
+        let mut env = MountainCarV0::builder().render_human(true).build();
         env.reset().unwrap();
         let action_space = env.action_space();
         for _ in 0..200 {

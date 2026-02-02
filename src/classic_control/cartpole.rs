@@ -1,5 +1,4 @@
-use std::marker::PhantomData;
-
+use crate::rendering::Renderer;
 use bon::bon;
 use candle_core::{Device, Tensor};
 use modurl::{
@@ -7,9 +6,17 @@ use modurl::{
     spaces::{self, Space},
 };
 
-use crate::PhantonUnsendsync;
-#[cfg(feature = "rendering")]
-use crate::rendering::Renderer;
+#[derive(PartialEq, Debug)]
+pub enum CartPoleObsMode {
+    Default,
+    RGBArray,
+}
+
+impl Default for CartPoleObsMode {
+    fn default() -> Self {
+        CartPoleObsMode::Default
+    }
+}
 
 /// The classic CartPole environment.
 /// Converted from the OpenAI Gym CartPole environment.
@@ -30,8 +37,7 @@ pub struct CartPoleV1 {
     state: Tensor,
     steps_since_reset: usize,
     sutton_barto_reward: bool,
-    _phantom: PhantonUnsendsync,
-    #[cfg(feature = "rendering")]
+    obs_mode: CartPoleObsMode,
     renderer: Option<Renderer>,
 }
 
@@ -44,7 +50,8 @@ impl CartPoleV1 {
         #[builder(default = true)] is_euler: bool,
         #[cfg(feature = "rendering")]
         #[builder(default = false)]
-        render: bool,
+        render_human: bool,
+        #[builder(default = CartPoleObsMode::Default)] obs_mode: CartPoleObsMode,
     ) -> Self {
         let gravity = 9.8;
         let masscart = 1.0;
@@ -72,6 +79,24 @@ impl CartPoleV1 {
         let action_space = spaces::Discrete::new(2);
         let observation_space = spaces::BoxSpace::new(low, high);
 
+        #[cfg(not(feature = "rendering"))]
+        let has_renderer = obs_mode == CartPoleObsMode::RGBArray;
+        #[cfg(feature = "rendering")]
+        let has_renderer = obs_mode == CartPoleObsMode::RGBArray || render_human;
+
+        let renderer = if has_renderer {
+            Some(Renderer::new(
+                600,
+                400,
+                #[cfg(feature = "rendering")]
+                "CartPole",
+                #[cfg(feature = "rendering")]
+                render_human,
+            ))
+        } else {
+            None
+        };
+
         Self {
             gravity,
             masspole,
@@ -90,17 +115,11 @@ impl CartPoleV1 {
                 .expect("Failed to create tensor."),
             steps_since_reset: 0,
             sutton_barto_reward,
-            #[cfg(feature = "rendering")]
-            renderer: if render {
-                Some(Renderer::new(600, 400, "CartPole"))
-            } else {
-                None
-            },
-            _phantom: PhantonUnsendsync(PhantomData),
+            renderer,
+            obs_mode,
         }
     }
 
-    #[cfg(feature = "rendering")]
     fn render(&mut self) {
         if let Some(renderer) = &mut self.renderer {
             let screen_width = renderer.get_width() as f32;
@@ -143,15 +162,12 @@ impl CartPoleV1 {
         }
     }
 
-    #[cfg(feature = "rendering")]
-    #[cfg(feature = "rendering")]
     fn draw_track(renderer: &mut crate::rendering::Renderer, screen_width: f32, cart_y: f32) {
         for x in 0..(screen_width as usize) {
             renderer.rect(x, cart_y as usize, 1, 2, 0x000000);
         }
     }
-    #[cfg(feature = "rendering")]
-    #[cfg(feature = "rendering")]
+
     fn draw_cart(
         renderer: &mut crate::rendering::Renderer,
         cart_x: f32,
@@ -178,8 +194,7 @@ impl CartPoleV1 {
             0x000000,
         );
     }
-    #[cfg(feature = "rendering")]
-    #[cfg(feature = "rendering")]
+
     fn draw_pole(
         renderer: &mut crate::rendering::Renderer,
         axle_x: f32,
@@ -218,7 +233,6 @@ impl CartPoleV1 {
         );
     }
 
-    #[cfg(feature = "rendering")]
     fn draw_axle(
         renderer: &mut crate::rendering::Renderer,
         axle_x: f32,
@@ -227,6 +241,29 @@ impl CartPoleV1 {
     ) {
         let axle_radius = (pole_width / 2.0) as usize;
         renderer.draw_circle(axle_x as usize, axle_y as usize, axle_radius, 0x8184CB);
+    }
+
+    fn get_rgb_array(&self) -> Result<Tensor, candle_core::Error> {
+        if let Some(renderer) = &self.renderer {
+            let buffer = renderer.get_buffer();
+            let w = renderer.get_width();
+            let h = renderer.get_height();
+
+            let mut rgb_data = Vec::with_capacity(w * h * 3);
+            for pixel in buffer.iter() {
+                let r = ((pixel >> 16) & 0xFF) as u8;
+                let g = ((pixel >> 8) & 0xFF) as u8;
+                let b = (pixel & 0xFF) as u8;
+                rgb_data.push(r);
+                rgb_data.push(g);
+                rgb_data.push(b);
+            }
+
+            let rgb_tensor = Tensor::from_vec(rgb_data, vec![h, w, 3], self.state.device())?;
+            Ok(rgb_tensor)
+        } else {
+            unreachable!("Renderer is not initialized.");
+        }
     }
 }
 
@@ -247,7 +284,6 @@ impl Gym for CartPoleV1 {
         self.state = state;
         self.steps_since_reset = 0;
 
-        #[cfg(feature = "rendering")]
         self.render();
 
         Ok(self.state.clone())
@@ -310,13 +346,17 @@ impl Gym for CartPoleV1 {
             });
         }
 
-        #[cfg(feature = "rendering")]
         self.render();
+        let obs = match self.obs_mode {
+            CartPoleObsMode::Default => self.state.clone(),
+            CartPoleObsMode::RGBArray => self.get_rgb_array()?,
+        };
+
         if !terminated {
             let reward = if self.sutton_barto_reward { 0.0 } else { 1.0 };
 
             Ok(StepInfo {
-                state: self.state.clone(),
+                state: obs,
                 reward,
                 done: false,
                 truncated: false,
@@ -327,7 +367,7 @@ impl Gym for CartPoleV1 {
             let reward = if self.sutton_barto_reward { -1.0 } else { 1.0 };
 
             Ok(StepInfo {
-                state: self.state.clone(),
+                state: obs,
                 reward,
                 done: true,
                 truncated: false,
@@ -344,7 +384,7 @@ impl Gym for CartPoleV1 {
             self.steps_beyond_terminated = Some(self.steps_beyond_terminated.unwrap() + 1);
 
             Ok(StepInfo {
-                state: self.state.clone(),
+                state: obs,
                 reward,
                 done: true,
                 truncated: false,
@@ -459,7 +499,7 @@ mod tests {
     #[cfg(feature = "rendering")]
     #[test]
     fn test_cartpole_rendering() {
-        let mut env = CartPoleV1::builder().render(true).build();
+        let mut env = CartPoleV1::builder().render_human(true).build();
         let _state = env.reset().expect("Failed to reset environment.");
         let action_space = env.action_space();
         for _ in 0..200 {

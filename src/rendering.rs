@@ -1,17 +1,36 @@
+use std::marker::PhantomData;
+
+#[cfg(feature = "rendering")]
 use minifb::{Window, WindowOptions};
 
-pub struct Renderer {
-    window: Window,
+use crate::PhantonUnsendsync;
+
+pub(crate) struct Renderer {
+    _phantom: PhantonUnsendsync,
+    #[cfg(feature = "rendering")]
+    window: Option<Window>,
     buffer: Vec<u32>, // ARGB8888
     w: usize,
     h: usize,
 }
 
 impl Renderer {
-    pub fn new(w: usize, h: usize, title: &str) -> Self {
-        let window = Window::new(title, w, h, WindowOptions::default()).expect("create window");
+    pub fn new(
+        w: usize,
+        h: usize,
+        #[cfg(feature = "rendering")] title: &str,
+        #[cfg(feature = "rendering")] render_to_window: bool,
+    ) -> Self {
+        #[cfg(feature = "rendering")]
+        let window = if render_to_window {
+            Some(Window::new(title, w, h, WindowOptions::default()).expect("create window"))
+        } else {
+            None
+        };
 
         Self {
+            _phantom: PhantonUnsendsync(PhantomData),
+            #[cfg(feature = "rendering")]
             window,
             buffer: vec![0; w * h],
             w,
@@ -23,6 +42,7 @@ impl Renderer {
         self.buffer.fill(color);
     }
 
+    #[cfg(all(feature = "rendering", feature = "atari"))]
     pub fn set_buffer(&mut self, buffer: &[u32]) {
         self.buffer.copy_from_slice(buffer);
     }
@@ -38,14 +58,31 @@ impl Renderer {
         }
     }
 
+    /// Present the current buffer to the window (if in human mode)
     pub fn present(&mut self) {
-        self.window
-            .update_with_buffer(&self.buffer, self.w, self.h)
-            .unwrap();
+        #[cfg(feature = "rendering")]
+        if let Some(window) = &mut self.window {
+            window
+                .update_with_buffer(&self.buffer, self.w, self.h)
+                .unwrap();
+        }
     }
 
     pub fn is_open(&self) -> bool {
-        self.window.is_open()
+        #[cfg(feature = "rendering")]
+        if let Some(window) = &self.window {
+            window.is_open()
+        } else {
+            true
+        }
+        #[cfg(not(feature = "rendering"))]
+        {
+            true
+        }
+    }
+
+    pub fn get_buffer(&self) -> &[u32] {
+        &self.buffer
     }
 
     pub fn quad(

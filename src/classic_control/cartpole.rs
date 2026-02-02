@@ -33,7 +33,6 @@ pub struct CartPoleV1 {
     is_euler: bool,
     steps_beyond_terminated: Option<usize>,
     action_space: spaces::Discrete,
-    observation_space: spaces::BoxSpace,
     state: Tensor,
     steps_since_reset: usize,
     sutton_barto_reward: bool,
@@ -66,18 +65,7 @@ impl CartPoleV1 {
         let theta_threshold_radians = 12.0 * 2.0 * std::f32::consts::PI / 360.0;
         let x_threshold = 2.4;
 
-        let high = vec![
-            x_threshold * 2.0,
-            std::f32::INFINITY,
-            theta_threshold_radians * 2.0,
-            std::f32::INFINITY,
-        ];
-        let low = high.iter().map(|x| -x).collect::<Vec<_>>();
-        let high = Tensor::from_vec(high, vec![4], device).expect("Failed to create tensor.");
-        let low = Tensor::from_vec(low, vec![4], device).expect("Failed to create tensor.");
-
         let action_space = spaces::Discrete::new(2);
-        let observation_space = spaces::BoxSpace::new(low, high);
 
         #[cfg(not(feature = "rendering"))]
         let has_renderer = obs_mode == CartPoleObsMode::RGBArray;
@@ -110,7 +98,6 @@ impl CartPoleV1 {
             steps_beyond_terminated: Some(0),
             is_euler,
             action_space,
-            observation_space,
             state: Tensor::zeros(vec![4], candle_core::DType::F32, device)
                 .expect("Failed to create tensor."),
             steps_since_reset: 0,
@@ -265,6 +252,32 @@ impl CartPoleV1 {
             unreachable!("Renderer is not initialized.");
         }
     }
+
+    fn default_observation_space(&self) -> Box<dyn Space<Error = <CartPoleV1 as Gym>::SpaceError>> {
+        let high = vec![
+            self.x_threshold * 2.0,
+            std::f32::INFINITY,
+            self.theta_threshold_radians * 2.0,
+            std::f32::INFINITY,
+        ];
+        let low = high.iter().map(|x| -x).collect::<Vec<_>>();
+        let high_tensor = Tensor::from_vec(high, vec![4], self.state.device())
+            .expect("Failed to create high tensor.");
+        let low_tensor = Tensor::from_vec(low, vec![4], self.state.device())
+            .expect("Failed to create low tensor.");
+        Box::new(spaces::BoxSpace::new(low_tensor, high_tensor))
+    }
+
+    fn rgb_array_observation_space(
+        &self,
+    ) -> Box<dyn Space<Error = <CartPoleV1 as Gym>::SpaceError>> {
+        let shape = vec![400, 600, 3];
+        let low_tensor = Tensor::zeros(shape.clone(), candle_core::DType::U8, self.state.device())
+            .expect("Failed to create low tensor");
+        let high_tensor =
+            Tensor::full(255u8, shape, self.state.device()).expect("Failed to create high tensor");
+        Box::new(spaces::BoxSpace::new(low_tensor, high_tensor))
+    }
 }
 
 impl Default for CartPoleV1 {
@@ -393,7 +406,10 @@ impl Gym for CartPoleV1 {
     }
 
     fn observation_space(&self) -> Box<dyn Space<Error = Self::SpaceError>> {
-        Box::new(self.observation_space.clone())
+        match self.obs_mode {
+            CartPoleObsMode::Default => self.default_observation_space(),
+            CartPoleObsMode::RGBArray => self.rgb_array_observation_space(),
+        }
     }
 
     fn action_space(&self) -> Box<dyn Space<Error = Self::SpaceError>> {
@@ -559,5 +575,22 @@ mod tests {
             }
             last_state = Some(state);
         }
+    }
+
+    #[test]
+    fn test_cartpole_spaces() {
+        let env = CartPoleV1::default();
+        let action_space = env.action_space();
+        assert_eq!(action_space.shape(), vec![2]);
+
+        let env = CartPoleV1::builder()
+            .obs_mode(CartPoleObsMode::RGBArray)
+            .build();
+        let obs_space = env.observation_space();
+        assert_eq!(obs_space.shape(), vec![400, 600, 3]);
+
+        let env = CartPoleV1::default();
+        let obs_space = env.observation_space();
+        assert_eq!(obs_space.shape(), vec![4]);
     }
 }

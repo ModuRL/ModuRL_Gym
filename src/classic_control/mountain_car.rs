@@ -23,7 +23,6 @@ impl Default for MountainCarObsMode {
 pub struct MountainCarV0 {
     state: Tensor,
     action_space: spaces::Discrete,
-    observation_space: spaces::BoxSpace,
     min_position: f32,
     max_position: f32,
     max_speed: f32,
@@ -53,13 +52,8 @@ impl MountainCarV0 {
         let force = 0.001;
         let gravity = 0.0025;
 
-        let low = vec![min_position, -max_speed];
-        let high = vec![max_position, max_speed];
-        let low = Tensor::from_vec(low, vec![2], device).expect("Failed to create tensor.");
-        let high = Tensor::from_vec(high, vec![2], device).expect("Failed to create tensor.");
-
+        // Action space initialization
         let action_space = spaces::Discrete::new(3);
-        let observation_space = spaces::BoxSpace::new(low, high);
 
         #[cfg(not(feature = "rendering"))]
         let has_renderer = obs_mode == MountainCarObsMode::RGBArray;
@@ -83,7 +77,6 @@ impl MountainCarV0 {
             state: Tensor::zeros(vec![2], candle_core::DType::F32, device)
                 .expect("Failed to create tensor."),
             action_space,
-            observation_space,
             min_position,
             max_position,
             max_speed,
@@ -312,6 +305,35 @@ impl MountainCarV0 {
             unreachable!("Renderer is not initialized.");
         }
     }
+
+    fn default_observation_space(
+        &self,
+    ) -> Box<dyn Space<Error = <MountainCarV0 as Gym>::SpaceError>> {
+        let min_position = self.min_position;
+        let max_position = self.max_position;
+        let max_speed = self.max_speed;
+
+        let low = vec![min_position, -max_speed];
+        let high = vec![max_position, max_speed];
+
+        let low_tensor = Tensor::from_vec(low, vec![2], self.state.device())
+            .expect("Failed to create low tensor");
+        let high_tensor = Tensor::from_vec(high, vec![2], self.state.device())
+            .expect("Failed to create high tensor");
+
+        Box::new(spaces::BoxSpace::new(low_tensor, high_tensor))
+    }
+
+    fn rgb_array_observation_space(
+        &self,
+    ) -> Box<dyn Space<Error = <MountainCarV0 as Gym>::SpaceError>> {
+        let shape = vec![400, 600, 3];
+        let low_tensor = Tensor::zeros(shape.clone(), candle_core::DType::U8, self.state.device())
+            .expect("Failed to create low tensor");
+        let high_tensor =
+            Tensor::full(255u8, shape, self.state.device()).expect("Failed to create high tensor");
+        Box::new(spaces::BoxSpace::new(low_tensor, high_tensor))
+    }
 }
 
 impl Default for MountainCarV0 {
@@ -381,7 +403,10 @@ impl Gym for MountainCarV0 {
     }
 
     fn observation_space(&self) -> Box<dyn Space<Error = Self::SpaceError>> {
-        Box::new(self.observation_space.clone())
+        match self.obs_mode {
+            MountainCarObsMode::Default => self.default_observation_space(),
+            MountainCarObsMode::RGBArray => self.rgb_array_observation_space(),
+        }
     }
 
     fn action_space(&self) -> Box<dyn Space<Error = Self::SpaceError>> {
@@ -488,5 +513,22 @@ mod tests {
             }
         }
         assert!(env.renderer.is_some());
+    }
+
+    #[test]
+    fn test_mountain_car_spaces() {
+        let env = MountainCarV0::default();
+        let action_space = env.action_space();
+        assert_eq!(action_space.shape(), vec![3]);
+
+        let env = MountainCarV0::builder()
+            .obs_mode(MountainCarObsMode::RGBArray)
+            .build();
+        let obs_space = env.observation_space();
+        assert_eq!(obs_space.shape(), vec![400, 600, 3]);
+
+        let env = MountainCarV0::default();
+        let obs_space = env.observation_space();
+        assert_eq!(obs_space.shape(), vec![2]);
     }
 }

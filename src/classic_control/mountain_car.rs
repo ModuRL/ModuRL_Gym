@@ -355,8 +355,12 @@ impl Gym for MountainCarV0 {
         self.state = Tensor::cat(&[position, velocity], 0)?;
 
         self.render();
+        let obs = match self.obs_mode {
+            MountainCarObsMode::Default => self.state.clone(),
+            MountainCarObsMode::RGBArray => self.get_rgb_array()?,
+        };
 
-        Ok(self.state.clone())
+        Ok(obs)
     }
 
     fn step(&mut self, action: Tensor) -> Result<StepInfo, Self::Error> {

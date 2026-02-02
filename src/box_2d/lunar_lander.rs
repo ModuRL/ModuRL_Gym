@@ -978,8 +978,12 @@ impl Gym for LunarLanderV3 {
         let step_info = self.step(Tensor::from_vec(vec![0u32], vec![], &self.device)?)?;
 
         self.render();
+        let obs = match self.obs_mode {
+            LunarLanderObsMode::Default => step_info.state,
+            LunarLanderObsMode::RGBArray => self.get_rgb_array()?,
+        };
 
-        Ok(step_info.state)
+        Ok(obs)
     }
 
     fn step(&mut self, action: Tensor) -> Result<StepInfo, Self::Error> {

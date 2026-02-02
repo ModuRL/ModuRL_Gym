@@ -298,8 +298,12 @@ impl Gym for CartPoleV1 {
         self.steps_since_reset = 0;
 
         self.render();
+        let obs = match self.obs_mode {
+            CartPoleObsMode::Default => self.state.clone(),
+            CartPoleObsMode::RGBArray => self.get_rgb_array()?,
+        };
 
-        Ok(self.state.clone())
+        Ok(obs)
     }
 
     fn step(&mut self, action: Tensor) -> Result<StepInfo, Self::Error> {
@@ -347,23 +351,23 @@ impl Gym for CartPoleV1 {
             || theta < -self.theta_threshold_radians
             || theta > self.theta_threshold_radians;
 
-        self.steps_since_reset += 1;
-        if self.steps_since_reset >= 500 {
-            // Consider it done if it has lasted 500 steps.
-            self.steps_beyond_terminated = Some(0);
-            return Ok(StepInfo {
-                state: self.state.clone(),
-                reward: 1.0,
-                done: false,
-                truncated: true,
-            });
-        }
-
         self.render();
         let obs = match self.obs_mode {
             CartPoleObsMode::Default => self.state.clone(),
             CartPoleObsMode::RGBArray => self.get_rgb_array()?,
         };
+
+        self.steps_since_reset += 1;
+        if self.steps_since_reset >= 500 {
+            // Consider it done if it has lasted 500 steps.
+            self.steps_beyond_terminated = Some(0);
+            return Ok(StepInfo {
+                state: obs,
+                reward: 1.0,
+                done: false,
+                truncated: true,
+            });
+        }
 
         if !terminated {
             let reward = if self.sutton_barto_reward { 0.0 } else { 1.0 };
